@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "judge_train"],
+  "driver": "../nb07_judge_train/driver.py",
+  "output": "nb07_judge_train_dry.py",
+  "config": true,
+  "defines": {"DRY": true}
+}

@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features", "scramble",
+              "judge_data"],
+  "driver": "driver.py",
+  "output": "nb06b_judge_data.py",
+  "config": true
+}

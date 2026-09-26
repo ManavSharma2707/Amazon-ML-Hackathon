@@ -1,0 +1,16 @@
+{
+  "id": "PLACEHOLDER/er-nb07-judge-train",
+  "title": "er-nb07-judge-train",
+  "code_file": "nb07_judge_train.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["PLACEHOLDER/er-judge-inputs"],
+  "competition_sources": [],
+  "kernel_sources": ["PLACEHOLDER/nb00-download-models"],
+  "model_sources": []
+}

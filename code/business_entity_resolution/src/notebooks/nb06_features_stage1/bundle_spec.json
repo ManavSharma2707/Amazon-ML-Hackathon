@@ -1,0 +1,6 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features", "stage1"],
+  "driver": "driver.py",
+  "output": "nb06_features_stage1.py",
+  "config": true
+}

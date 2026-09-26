@@ -67,6 +67,10 @@ stage1:
   min_data_in_leaf: 50
   folds: 5
   monotone: auto
+  max_rounds: 1500
+  max_bin: 127
+  a_s1_cap: 150000   # Half-A S1s used for stage-1 training (NB05 queried 250k per half)
+  b_s1_cap: 250000   # Half-B S1s scored (all NB05 B queries)
 
 judge:
   model: qwen3-4b

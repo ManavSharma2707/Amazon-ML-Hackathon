@@ -34,6 +34,9 @@ finetune:
   hard_negs: 3
   scramble_frac: 0.2
   field_dropout: 0.1
+  lora_r: 32             # LoRA on all linear layers (memory-safe on a T4 vs full fine-tune)
+  max_anchors: 80000     # Half-A anchors sampled for triplets
+  time_budget_min: 90    # training stops at this wall-clock budget
 
 blocking:
   dense_k: 30

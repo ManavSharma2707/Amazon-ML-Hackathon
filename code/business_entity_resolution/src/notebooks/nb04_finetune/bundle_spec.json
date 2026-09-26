@@ -1,0 +1,6 @@
+{
+  "modules": ["kaggle_env", "io_utils", "embed", "scramble", "finetune_embedder"],
+  "driver": "driver.py",
+  "output": "nb04_finetune.py",
+  "config": true
+}

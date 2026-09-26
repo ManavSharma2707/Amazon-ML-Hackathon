@@ -157,12 +157,13 @@ Leaderboard scores are ~0.99, so the last 1% is where the competition is decided
   - unknown ID prefixes;
   - matches not in candidates;
   - missing S1 rows.
-- **Logging:** use `logging` with timings per stage. Print shapes, counts and key metrics.
+- **Logging:** use `logging` with timings per stage. Print shapes, counts and key metrics. **For any Kaggle kernel that can run more than ~1-2 minutes, this is not optional:** print a timestamped line (`flush=True`) at the start and end of every major stage/sub-step (each file loaded with its row count, each numbered EDA/feature/training step). A kernel that prints nothing until it finishes is a black box — `kaggle kernels output`/`kernels status` can't show progress, and a stuck vs. slow-but-fine run become indistinguishable (this happened with NB01: 45+ minutes with zero visibility before per-stage logging was added). Chunk any big Python-level loop (row-wise `.apply`, per-item loops) and log progress every N items/chunks, not just once at the end.
 - **GPU code must work on a Kaggle T4:**
   - fp16 (no bf16);
   - `attn_implementation="sdpa"` (no flash-attn 2);
   - checkpoints every N steps to `/kaggle/working`;
   - jobs sized to finish in ≤ 8 hours.
+  - **Dry-run first, every time.** Before pushing a full GPU job, push a fast/dry-run variant first (tiny data slice, 1 batch or a few steps, small model if feasible) to catch import/path/shape/dtype errors on the *actual* Kaggle GPU environment. Only push the full run once the dry run completes clean. GPU quota is scarce (~30 h/week) and a crash discovered only after a multi-hour run wastes it; a dry run costs minutes. Applies to NB03 onward (embeddings, fine-tuning, judge training/inference).
 - **Dependencies:** add to `requirements.txt` with pinned versions. Allowed licences only (MIT/BSD/Apache/ISC).
 
 ---
@@ -171,7 +172,7 @@ Leaderboard scores are ~0.99, so the last 1% is where the competition is decided
 
 - **Local machine:** CPU work, code authoring, unit tests, small-sample runs.
 - **Kaggle:** P100 or 2× T4 (16 GB each), ~30 GPU h/week, 9–12 h sessions. Two GPU runners (R1, R2) can work in parallel; how each runner authenticates is defined only in `CLAUDE.local.md`.
-- **Code reaches Kaggle** as a Kaggle Dataset (`er-code`), uploaded from `code/business_entity_resolution/`. Notebooks do `sys.path.insert(0, "/kaggle/input/er-code")` and `from src import ...`.
+- **Every notebook/kernel pushed to Kaggle must be self-contained: no `sys.path.insert` + `from src import ...`, no dependency on `er-code` (or any dataset) being mounted for code.** This was the original design but broke in practice (NB01: `ModuleNotFoundError: No module named 'src'` even with `er-code` correctly attached — this Kaggle environment mounts datasets at `/kaggle/input/datasets/<owner>/<slug>/`, not the classic `/kaggle/input/<slug>/`, and that mismatch is easy to hit again). Fix: `src/` stays the single source of truth (testable locally with pytest), and `tools/bundle_kernel.py` inlines the needed `src/*.py` modules + a hand-written `driver.py` into one self-contained generated script per notebook folder (`bundle_spec.json` lists the modules; `kaggle_ops.py`'s `push_notebook` auto-regenerates it on every push). A kernel only ever needs *data* mounted (`er-data`, `er-models`), never code. When a path under `/kaggle/input/` is genuinely needed (e.g. dataset locations), resolve it dynamically (glob for both mount conventions) rather than hard-coding either one or any username.
 - **Model weights** are downloaded once (internet ON) in `NB00` and saved as Kaggle Dataset `er-models`. All other notebooks load from `/kaggle/input/er-models/...` with internet OFF.
 - You (Claude Code) **drive Kaggle through the official `kaggle` CLI**: push notebooks (`kaggle kernels push`), poll status (`kaggle kernels status`), fetch outputs (`kaggle kernels output`), and create or version private datasets (`kaggle datasets create|version`). Rules:
   - Runner selection is done only through the environment variable `KAGGLE_CONFIG_DIR`, set per command from the paths in `CLAUDE.local.md`. Never copy credentials into the repo, never print them, never echo `kaggle.json`.

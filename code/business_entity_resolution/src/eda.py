@@ -12,8 +12,10 @@ whatever string is present in the data (CLAUDE.md SS3 rule 4).
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
+import time
 import unicodedata
 from pathlib import Path
 
@@ -21,6 +23,23 @@ import numpy as np
 import pandas as pd
 
 from . import io_utils
+
+_START_TIME = time.time()
+
+
+def _log(msg: str) -> None:
+    """Print a timestamped progress line and flush immediately.
+
+    `run_eda` can take tens of minutes on the full dataset with nothing
+    printed until the very end otherwise (CLAUDE.md SS5: log timings per
+    stage). `flush=True` matters because a long-running Kaggle kernel's
+    stdout is otherwise buffered and invisible in `kaggle kernels output`
+    until the process exits.
+
+    Inputs: msg - the message to log. Outputs: None (prints to stdout).
+    """
+    elapsed = time.time() - _START_TIME
+    print(f"[{elapsed:7.1f}s] {msg}", flush=True)
 
 TOKEN_RE = re.compile(r"[^\W\d_]+|\d+", re.UNICODE)
 
@@ -52,16 +71,24 @@ def load_train(data_dir: Path) -> dict[str, pd.DataFrame]:
     Outputs: dict with keys s1, s2, s3, gt_raw (DataFrames).
     """
     train = data_dir / "train"
+    _log("  reading train_source1.tsv...")
     s1 = io_utils.load_tsv(train / "train_source1.tsv")
+    _log(f"  train_source1.tsv: {len(s1):,} rows")
+    _log("  reading train_source2.tsv...")
     s2 = io_utils.load_tsv(train / "train_source2.tsv")
+    _log(f"  train_source2.tsv: {len(s2):,} rows")
+    _log("  reading train_source3.tsv...")
     s3 = io_utils.load_tsv(train / "train_source3.tsv")
+    _log(f"  train_source3.tsv: {len(s3):,} rows")
     io_utils.assert_source_columns(s1, "train_source1.tsv")
     io_utils.assert_source_columns(s2, "train_source2.tsv")
     io_utils.assert_source_columns(s3, "train_source3.tsv")
     io_utils.assert_unique_ids(s1, "S1-", "train_source1.tsv")
     io_utils.assert_unique_ids(s2, "S2-", "train_source2.tsv")
     io_utils.assert_unique_ids(s3, "S3-", "train_source3.tsv")
+    _log("  reading train_ground_truth.tsv...")
     gt_raw = io_utils.load_tsv(train / "train_ground_truth.tsv")
+    _log(f"  train_ground_truth.tsv: {len(gt_raw):,} rows")
     return {"s1": s1, "s2": s2, "s3": s3, "gt_raw": gt_raw}
 
 
@@ -72,9 +99,15 @@ def load_test(data_dir: Path) -> dict[str, pd.DataFrame]:
     Outputs: dict with keys s1, s2, s3 (DataFrames).
     """
     test = data_dir / "test"
+    _log("  reading test_source1.tsv...")
     s1 = io_utils.load_tsv(test / "test_source1.tsv")
+    _log(f"  test_source1.tsv: {len(s1):,} rows")
+    _log("  reading test_source2.tsv...")
     s2 = io_utils.load_tsv(test / "test_source2.tsv")
+    _log(f"  test_source2.tsv: {len(s2):,} rows")
+    _log("  reading test_source3.tsv...")
     s3 = io_utils.load_tsv(test / "test_source3.tsv")
+    _log(f"  test_source3.tsv: {len(s3):,} rows")
     io_utils.assert_source_columns(s1, "test_source1.tsv")
     io_utils.assert_source_columns(s2, "test_source2.tsv")
     io_utils.assert_source_columns(s3, "test_source3.tsv")
@@ -233,10 +266,9 @@ def _classify_name_relation(name_a: str, name_b: str) -> str:
         return "reorder"
     if set_a and set_b and (set_a <= set_b or set_b <= set_a) and set_a != set_b:
         return "abbrev_or_drop"
-    from rapidfuzz.distance import Levenshtein
-
-    max_len = max(len(name_a), len(name_b), 1)
-    if Levenshtein.distance(name_a, name_b) / max_len < 0.2:
+    # difflib.SequenceMatcher.ratio() (stdlib, no dependency) as an approximate
+    # stand-in for a Levenshtein-ratio threshold — good enough for a census.
+    if difflib.SequenceMatcher(None, name_a, name_b).ratio() > 0.8:
         return "typo"
     return "other_noise"
 
@@ -248,7 +280,14 @@ def e8_noise_census(joined_sample: pd.DataFrame) -> dict:
     Outputs: dict of relation -> fraction, plus missing-postcode-style checks skipped
     (postcode census lives in E11).
     """
-    relations = joined_sample.apply(lambda r: _classify_name_relation(r["name_a"], r["name_b"]), axis=1)
+    chunk_size = 50_000
+    chunks = []
+    n = len(joined_sample)
+    for start in range(0, n, chunk_size):
+        chunk = joined_sample.iloc[start : start + chunk_size]
+        chunks.append(chunk.apply(lambda r: _classify_name_relation(r["name_a"], r["name_b"]), axis=1))
+        _log(f"  E8 progress: {min(start + chunk_size, n):,}/{n:,} pairs classified")
+    relations = pd.concat(chunks) if chunks else pd.Series(dtype=object)
     return relations.value_counts(normalize=True).to_dict()
 
 
@@ -264,23 +303,31 @@ def e9_hard_negatives(s1: pd.DataFrame, s2: pd.DataFrame, s3: pd.DataFrame, matc
             n_cand_sample - sample sizes; seed - RNG seed.
     Outputs: dict with the count of near-duplicate non-matches found and a few examples.
     """
-    from rapidfuzz import fuzz
-
     rng = np.random.default_rng(seed)
     records23 = pd.concat([s2, s3], ignore_index=True)
+    # Precompute country groups once instead of re-filtering the full ~10M-row
+    # table inside the loop on every one of the n_s1_sample iterations.
+    country_groups = {country: g for country, g in records23.groupby("country")}
     s1_sample = s1.sample(n=min(n_s1_sample, len(s1)), random_state=seed)
     examples = []
     near_dup_count = 0
     total_checked = 0
-    for _, row in s1_sample.iterrows():
-        same_country = records23[records23["country"] == row["country"]]
-        if same_country.empty:
+    for i, (_, row) in enumerate(s1_sample.iterrows()):
+        if i > 0 and i % 100 == 0:
+            _log(f"  E9 progress: {i}/{len(s1_sample)} S1 entities checked")
+        same_country = country_groups.get(row["country"])
+        if same_country is None or same_country.empty:
             continue
         cand = same_country.sample(n=min(n_cand_sample, len(same_country)), random_state=int(rng.integers(1_000_000)))
         cand = cand[~cand["entity_id"].isin(matched_ids)]
         if cand.empty:
             continue
-        scores = cand["business_name"].apply(lambda n: fuzz.ratio(row["business_name"].casefold(), n.casefold()))
+        # difflib (stdlib) ratio() on a 0-100 scale, as an approximate stand-in
+        # for rapidfuzz.fuzz.ratio() — good enough for an illustrative EDA sample.
+        s1_name_cf = row["business_name"].casefold()
+        scores = cand["business_name"].apply(
+            lambda n: difflib.SequenceMatcher(None, s1_name_cf, n.casefold()).ratio() * 100
+        )
         total_checked += len(cand)
         top_idx = scores.idxmax()
         if scores.loc[top_idx] >= 85:
@@ -311,7 +358,7 @@ def e10_field_quality(s1: pd.DataFrame, s2: pd.DataFrame, s3: pd.DataFrame) -> d
     for name, df in (("s1", s1), ("s2", s2), ("s3", s3)):
         name_len = df["business_name"].str.len()
         addr_len = df["business_address"].str.len()
-        non_latin = (df["business_name"] + " " + df["business_address"]).apply(_is_non_latin)
+        non_latin = (df["business_name"] + " " + df["business_address"]).apply(_is_non_latin).astype(bool)
         out[name] = {
             "empty_name_frac": float((name_len == 0).mean()),
             "short_name_frac_lt5": float((name_len < 5).mean()),
@@ -349,7 +396,7 @@ def e12_test_composition(test_s1: pd.DataFrame) -> dict:
     Inputs: test_s1 - test source1 DataFrame.
     Outputs: dict with per-country counts and non-Latin fraction.
     """
-    non_latin = (test_s1["business_name"] + " " + test_s1["business_address"]).apply(_is_non_latin)
+    non_latin = (test_s1["business_name"] + " " + test_s1["business_address"]).apply(_is_non_latin).astype(bool)
     return {
         "per_country_counts": test_s1["country"].value_counts().to_dict(),
         "non_latin_frac": float(non_latin.mean()),
@@ -402,29 +449,68 @@ def run_eda(data_dir: Path) -> dict:
     Inputs: data_dir - path to the dataset root (contains train/ and test/).
     Outputs: dict keyed by question ID (e1..e12, shortcut_check, all_empty_floor).
     """
+    _log("loading train (source1/2/3 + ground truth)...")
     train = load_train(data_dir)
+    _log(f"train loaded: S1={len(train['s1']):,} S2={len(train['s2']):,} S3={len(train['s3']):,}")
+
+    _log("loading test (source1/2/3)...")
     test = load_test(data_dir)
+    _log(f"test loaded: S1={len(test['s1']):,} S2={len(test['s2']):,} S3={len(test['s3']):,}")
+
+    _log("exploding ground truth into (s1_id, matched_id) pairs...")
     exploded = explode_ground_truth(train["gt_raw"])
     matched_ids = set(exploded["matched_id"])
-    positive_sample = build_positive_pairs_sample(exploded, train["s1"], train["s2"], train["s3"])
+    _log(f"exploded to {len(exploded):,} pairs, {len(matched_ids):,} unique matched IDs")
 
+    _log("building 300k-pair positive sample for E7/E8...")
+    positive_sample = build_positive_pairs_sample(exploded, train["s1"], train["s2"], train["s3"])
+    _log(f"positive sample built: {len(positive_sample):,} rows")
+
+    findings: dict = {}
+
+    _log("E1: sizes...")
+    findings["e1_sizes"] = e1_sizes(train, test)
+
+    _log("E2: singleton rate...")
     e2 = e2_singleton_rate(train["gt_raw"], train["s1"])
-    findings = {
-        "e1_sizes": e1_sizes(train, test),
-        "e2_singleton_rate": e2,
-        "e3_match_count_distribution": e3_match_count_distribution(train["gt_raw"], exploded),
-        "e4_multi_owner_check": e4_multi_owner_check(exploded),
-        "e5_cross_country_matches": e5_cross_country_matches(exploded, train["s1"], train["s2"], train["s3"]),
-        "e6_unmatched_share": e6_unmatched_share(exploded, train["s2"], train["s3"]),
-        "e7_exact_rate": e7_exact_rate(positive_sample),
-        "e8_noise_census": e8_noise_census(positive_sample),
-        "e9_hard_negatives": e9_hard_negatives(train["s1"], train["s2"], train["s3"], matched_ids),
-        "e10_field_quality": e10_field_quality(train["s1"], train["s2"], train["s3"]),
-        "e11_postcode_formats": e11_postcode_formats(train["s1"]),
-        "e12_test_composition": e12_test_composition(test["s1"]),
-        "shortcut_check": shortcut_check(train["gt_raw"]),
-        "all_empty_floor": e2["overall"],
-    }
+    findings["e2_singleton_rate"] = e2
+    _log(f"  overall singleton/floor = {e2['overall']:.4f}")
+
+    _log("E3: match count distribution...")
+    findings["e3_match_count_distribution"] = e3_match_count_distribution(train["gt_raw"], exploded)
+
+    _log("E4: multi-owner check (groupby nunique over exploded pairs)...")
+    findings["e4_multi_owner_check"] = e4_multi_owner_check(exploded)
+
+    _log("E5: cross-country matches...")
+    findings["e5_cross_country_matches"] = e5_cross_country_matches(exploded, train["s1"], train["s2"], train["s3"])
+
+    _log("E6: unmatched share (isin over S2/S3)...")
+    findings["e6_unmatched_share"] = e6_unmatched_share(exploded, train["s2"], train["s3"])
+
+    _log("E7: exact-name/address rates (on sample)...")
+    findings["e7_exact_rate"] = e7_exact_rate(positive_sample)
+
+    _log("E8: noise census (row-wise apply + difflib on 300k-row sample -- can take a while)...")
+    findings["e8_noise_census"] = e8_noise_census(positive_sample)
+
+    _log("E9: hard negatives (500 S1 x 300 candidates, difflib -- can take a while)...")
+    findings["e9_hard_negatives"] = e9_hard_negatives(train["s1"], train["s2"], train["s3"], matched_ids)
+
+    _log("E10: field quality...")
+    findings["e10_field_quality"] = e10_field_quality(train["s1"], train["s2"], train["s3"])
+
+    _log("E11: postcode formats (per-row regex over all of train S1)...")
+    findings["e11_postcode_formats"] = e11_postcode_formats(train["s1"])
+
+    _log("E12: test composition...")
+    findings["e12_test_composition"] = e12_test_composition(test["s1"])
+
+    _log("shortcut check...")
+    findings["shortcut_check"] = shortcut_check(train["gt_raw"])
+
+    findings["all_empty_floor"] = e2["overall"]
+    _log("run_eda complete.")
     return findings
 
 

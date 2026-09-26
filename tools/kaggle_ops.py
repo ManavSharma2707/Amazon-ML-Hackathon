@@ -39,6 +39,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bundle_kernel  # noqa: E402  (needs sys.path set up first)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_LOCAL = REPO_ROOT / ".env.local"
 
@@ -123,6 +126,11 @@ def _run_kaggle(
     """
     env = os.environ.copy()
     env["KAGGLE_API_TOKEN"] = _read_token(runner)
+    # Without this, the kaggle CLI crashes writing non-ASCII output on Windows
+    # (0-byte file, "'charmap' codec can't encode characters") instead of
+    # failing loudly — force UTF-8 regardless of the console's codepage.
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     cmd = [_python_exe(), "-m", "kaggle"] + args
     result = subprocess.run(
         cmd, cwd=str(cwd) if cwd else REPO_ROOT, env=env, capture_output=True, text=True
@@ -201,6 +209,11 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
     Runs with `cwd=kernel_dir` and `-p .` (Windows path-bug workaround, see
     module docstring).
 
+    If `kernel_dir` contains a `bundle_spec.json` (see bundle_kernel.py), the
+    self-contained kernel script is (re)generated from the current `src/`
+    modules + driver.py before every push — `src/` stays the single source of
+    truth and the pushed script never depends on a mounted code dataset.
+
     `kernel-metadata.json` in `kernel_dir` must have its `id` field, and any
     `dataset_sources` entries, prefixed with `PLACEHOLDER/` (e.g.
     `"PLACEHOLDER/nb00-download-models"`, `"PLACEHOLDER/er-code"`); this
@@ -217,6 +230,9 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
     Outputs: stdout from the push command (contains the kernel URL/slug).
     """
     kernel_dir = Path(kernel_dir).resolve()
+    spec_path = kernel_dir / "bundle_spec.json"
+    if spec_path.exists():
+        bundle_kernel.bundle_from_spec(spec_path)
     _, username = runner_config(runner)
     meta_path = kernel_dir / "kernel-metadata.json"
     original_text = meta_path.read_text(encoding="utf-8")

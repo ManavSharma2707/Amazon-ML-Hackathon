@@ -71,7 +71,7 @@ def dense_parts(emb_dir, prefix: str, split: str, q_rows: np.ndarray, n_s1: int)
 
 def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> dict:
     """Run the four sparse channels per country group; return global-row lists."""
-    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair")}
+    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair")}
     s1_cty, p_cty = s1["country"].to_numpy(), pool["country"].to_numpy()
     for c in sorted(set(s1_cty[q_rows].tolist())):
         qi = q_rows[s1_cty[q_rows] == c]
@@ -86,6 +86,7 @@ def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> di
             "num_key": (lambda d: blocking.num_key_text(d["norm_addr"], d["house_number"]), "word", BC["num_key_k"], BC["num_key_max_df"]),
             "name_pair": (lambda d: d["fold_name"].tolist(), "name_pair", BC["pair_k"], BC["pair_max_df"]),
             "addr_pair": (lambda d: d["fold_addr"].tolist(), "addr_pair", BC["pair_k"], BC["pair_max_df"]),
+            "cross_pair": (lambda d: blocking.cross_text(d["fold_name"], d["fold_addr"]), "cross_pair", BC["pair_k"], BC["pair_max_df"]),
         }
         for ch, (text_fn, kind, k, max_df) in specs.items():
             t0 = time.time()
@@ -171,7 +172,8 @@ def true_keys_for(s1, pool, pairs, q_rows):
 def to_cands(pr: pd.DataFrame, s1, pool) -> pd.DataFrame:
     """Pruned union rows -> saved candidate table with entity IDs."""
     keep = ["bitmask", "n_channels", "dense_rank", "reverse_rank", "name_char_score", "addr_char_score",
-            "name_tok_score", "num_key_score", "name_pair_score", "addr_pair_score", "dense_cos", "cheap_score"]
+            "name_tok_score", "num_key_score", "name_pair_score", "addr_pair_score", "cross_pair_score", "dense_cos",
+            "cheap_score"]
     out = pr[keep].copy()
     out.insert(0, "cand_id", pool["entity_id"].to_numpy()[pr["p_row"].to_numpy()])
     out.insert(0, "s1_id", s1["entity_id"].to_numpy()[pr["q_row"].to_numpy()])

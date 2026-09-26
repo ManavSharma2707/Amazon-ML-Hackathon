@@ -14,6 +14,9 @@ country matches — by label equality only, never by value):
               ~1-2% of records while house numbers are in ~90%
 - name_pair   unordered pairs of fold-form name tokens ("glypheus|platforms")
 - addr_pair   unordered pairs of fold-form address tokens ("238|houston")
+- cross_pair  name token x address token pairs ("glypheus|houston"): keeps a
+              match whose name is broken (native script, concatenation) or
+              generic while part of the address survives, and vice versa
               Names and addresses here are combinations of individually
               common words (NB05 sparse v1: "Glypheus" starts many unrelated
               names), so single tokens / char n-grams are pruned by the df cap
@@ -36,13 +39,35 @@ from __future__ import annotations
 
 import time
 import multiprocessing
+import re
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-CHANNELS = ["dense", "reverse", "name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair"]
-_PAIR_MAX_TOKENS = {"name_pair": 8, "addr_pair": 10}
+CHANNELS = ["dense", "reverse", "name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair"]
+_PAIR_MAX_TOKENS = {"name_pair": 8, "addr_pair": 10, "cross_name": 6, "cross_addr": 10}
+# Digits used as look-alike letters inside words ("k01kata", "h0spital",
+# "dermato1ogy"): a noise type found in NB05 v4's missed B pairs.
+_NUMBER_LIKE = re.compile(r"^\d+[a-z]{0,4}$")
+_DELEET = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b"})
+
+
+def deleet(token: str) -> str:
+    """Map look-alike digits to letters in a mostly-alphabetic token; other tokens unchanged.
+
+    "k01kata" -> "kolkata", "8ombay" -> "bombay"; "238", "3rd", "12bis", "b2" stay.
+    """
+    n_dig = sum(ch.isdigit() for ch in token)
+    # Digits-then-short-suffix tokens are numbers: ordinals ("3rd"), house numbers ("12b", "12bis").
+    if n_dig == 0 or n_dig * 2 >= len(token) or _NUMBER_LIKE.match(token):
+        return token
+    return token.translate(_DELEET)
+
+
+def _tokens(text: str) -> list[str]:
+    """Whitespace tokens with look-alike digits mapped back to letters."""
+    return [deleet(t) for t in text.split()]
 _BIT = {c: 1 << i for i, c in enumerate(CHANNELS)}
 
 # ---------------------------------------------------------------------------
@@ -58,8 +83,8 @@ def name_tok_text(norm_name: pd.Series, fold_name: pd.Series) -> list[str]:
     """
     out = []
     for n, f in zip(norm_name.tolist(), fold_name.tolist()):
-        toks = [t for t in n.split() if not t.isdigit() and t != "&"]
-        toks += ["~" + t for t in f.split() if not t.isdigit() and t != "&" and t not in toks]
+        toks = [t for t in _tokens(n) if not t.isdigit() and t != "&"]
+        toks += ["~" + t for t in _tokens(f) if not t.isdigit() and t != "&" and t not in toks]
         out.append(" ".join(toks))
     return out
 
@@ -102,7 +127,7 @@ def _pair_keys(text: str, max_tokens: int) -> list[str]:
 
     Order-free, so reordered records share the same keys.
     """
-    toks = sorted(set(text.split()[: max_tokens * 2]))[:max_tokens]
+    toks = sorted(set(_tokens(text)[: max_tokens * 2]))[:max_tokens]
     return [a + "|" + b for i, a in enumerate(toks) for b in toks[i + 1 :]]
 
 
@@ -114,6 +139,19 @@ def _name_pair_analyzer(text: str) -> list[str]:
 def _addr_pair_analyzer(text: str) -> list[str]:
     """Analyzer for the addr_pair channel."""
     return _pair_keys(text, _PAIR_MAX_TOKENS["addr_pair"])
+
+
+def _cross_pair_analyzer(text: str) -> list[str]:
+    """Analyzer for the cross_pair channel: text is "<fold name>	<fold address>"."""
+    name, _, addr = text.partition("	")
+    nt = sorted({t for t in _tokens(name) if not t.isdigit() and t != "&"})[: _PAIR_MAX_TOKENS["cross_name"]]
+    at = sorted(set(_tokens(addr)))[: _PAIR_MAX_TOKENS["cross_addr"]]
+    return [f"{a}^{b}" for a in nt for b in at]
+
+
+def cross_text(fold_name: pd.Series, fold_addr: pd.Series) -> list[str]:
+    """Per-record input text for the cross_pair channel."""
+    return [f"{n}	{a}" if a else "" for n, a in zip(fold_name.tolist(), fold_addr.tolist())]
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +169,8 @@ def _vectorizer(kind: str):
             analyzer="char_wb", ngram_range=(3, 4), n_features=_N_FEATURES,
             alternate_sign=False, norm=None, dtype=np.float32, lowercase=False,
         )
-    analyzer = {"word": str.split, "name_pair": _name_pair_analyzer, "addr_pair": _addr_pair_analyzer}[kind]
+    analyzer = {"word": str.split, "name_pair": _name_pair_analyzer, "addr_pair": _addr_pair_analyzer,
+                "cross_pair": _cross_pair_analyzer}[kind]
     return HashingVectorizer(
         analyzer=analyzer, n_features=_N_FEATURES, alternate_sign=False, norm=None, dtype=np.float32, lowercase=False,
     )
@@ -319,7 +358,8 @@ def add_gap_features(u: pd.DataFrame) -> None:
     """
     starts = np.flatnonzero(np.r_[True, u["q_row"].to_numpy()[1:] != u["q_row"].to_numpy()[:-1]])
     sizes = np.diff(np.r_[starts, len(u)])
-    for col in ("dense_cos", "name_char_score", "addr_char_score", "name_tok_score", "name_pair_score", "addr_pair_score"):
+    for col in ("dense_cos", "name_char_score", "addr_char_score", "name_tok_score", "name_pair_score", "addr_pair_score",
+                "cross_pair_score"):
         v = u[col].to_numpy()
         best = np.fmax.reduceat(np.nan_to_num(v, nan=-1.0), starts)
         u[f"{col}_gap"] = v - np.repeat(best, sizes)
@@ -334,6 +374,7 @@ PRUNE_FEATURES = [
     "num_key_score", "n_channels", "union_size",
     "name_pair_score", "name_pair_rank", "name_pair_score_gap",
     "addr_pair_score", "addr_pair_rank", "addr_pair_score_gap",
+    "cross_pair_score", "cross_pair_rank", "cross_pair_score_gap",
 ]
 
 

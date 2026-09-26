@@ -32,6 +32,16 @@ def test_empty_rows_anywhere_do_not_crash():
     assert set(qi.tolist()) == {1} and pi[0] == 1 and np.isfinite(sc).all()
 
 
+def test_deleet_and_cross_pairs():
+    """Look-alike digits map back to letters only inside words; cross keys pair name x address."""
+    assert blocking.deleet("k01kata") == "kolkata" and blocking.deleet("capita1") == "capital"
+    assert blocking.deleet("8ombay") == "bombay" and blocking.deleet("12bis") == "12bis"
+    assert blocking.deleet("238") == "238" and blocking.deleet("3rd") == "3rd" and blocking.deleet("b2") == "b2"
+    keys = blocking._cross_pair_analyzer(blocking.cross_text(pd.Series(["acme 24 & co"]), pd.Series(["12 main"]))[0])
+    assert sorted(keys) == ["acme^12", "acme^main", "co^12", "co^main"]
+    assert blocking.cross_text(pd.Series(["x"]), pd.Series([""])) == [""]
+
+
 def test_max_df_prunes_frequent_features():
     """A token present in every pool record is dropped from the index (no match through it)."""
     q = ["common"]

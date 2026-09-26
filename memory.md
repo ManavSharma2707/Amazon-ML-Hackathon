@@ -79,12 +79,14 @@
 | 2026-09-26 15:40 IST | All code is written by us; **never copy code from public repos** of this challenge (several exist on GitHub/Kaggle) | Plagiarism = disqualification |
 | 2026-09-26 15:40 IST | In the zip, **all code lives under `src/`** (configs, scripts and notebooks too); only `README.md` and `requirements.txt` sit next to it | Problem statement: "Put all source under src/" |
 | 2026-09-26 15:40 IST | Scale guard: if records are in the millions, use MRL-truncated 256-d embeddings + FAISS IVF (not flat), and a cheap vectorised pre-ranker before the Python-heavy explain features. `candidate_pairs.tsv` = the set **after** the pre-ranker (the set the final model scores) | Keeps runtime inside Kaggle limits; matches the "last filtering stage" rule |
+| 2026-09-26 17:15 IST | **Scale guard: ON** (Q8 resolved). Train: S1 2,206,821 rows, S2 5,034,616, S3 5,285,603. Test: S1 1,732,544, S2 4,887,273, S3 5,082,316. Raw dataset ~2.4 GB | File line counts measured directly; matches the validator script's own comment about a "~1.7M-entity test set" |
+| 2026-09-26 17:15 IST | **All CPU-heavy work (EDA included) runs as a Kaggle CPU kernel, never locally** | Local machine has only ~822 MB free RAM of 7.9 GB total; pandas over millions of rows would not fit. Local machine is for code authoring, unit tests on small samples, and git only |
 
 ## 6. EDA findings (fill in during Step 1)
 
 | ID | Question | Finding |
 |---|---|---|
-| E1 | Sizes S1/S2/S3 per split and country | TBD |
+| E1 | Sizes S1/S2/S3 per split and country | Row counts (all rows, pre country split — see SS5 decision above): train S1 2,206,821 / S2 5,034,616 / S3 5,285,603; test S1 1,732,544 / S2 4,887,273 / S3 5,082,316. Per-country breakdown TBD (needs a Kaggle CPU kernel) |
 | E2 | Singleton rate overall / per country (= all-empty floor) | TBD |
 | E3 | #matches per S1 (S2 vs S3) | TBD |
 | E4 | Any S2/S3 ID under two S1s? | TBD → decides the one-owner mode |
@@ -122,6 +124,9 @@
 - In-batch negatives: two positives of the same S1 in one batch = false negatives → sampler must enforce one S1 per batch.
 - `skeleton_abbrev` can be too permissive for 2-letter tokens (e.g., "st"); keep the length-ratio constraint and a separate `n_short_abbrev` counter.
 - Qwen3 chat template: use `enable_thinking=False` for the judge.
+- `kaggle datasets list --mine` and `kaggle datasets download` do **not** validate credentials — both succeed even with a completely fake username/key. Only a write call (`datasets create`/`version`, `kernels push`) is a real auth test. Don't trust a `list`/`download` success as proof credentials work.
+- Default `pip install kaggle` gets CLI 2.2.4, which prints an OAuth "Authentication required to call the Kaggle API" banner on write calls even when kaggle.json is present. Pinning `kaggle==1.6.17` (classic auth, console script at `.../Scripts/kaggle.exe`, not `python -m kaggle`) avoids that extra layer — but does not fix an actually-invalid key (see progress.md blockers, 2026-09-26).
+- On this Windows machine, bare `python`/`python3` on PATH resolve to the Microsoft Store alias and fail with "Python was not found". Use the real interpreter path recorded in `CLAUDE.local.md`.
 
 ## 10. Open questions
 
@@ -136,7 +141,7 @@ Ask the organisers through the official **Google Form** linked in the guidelines
 | Q5 | Which submission's score is used for the private leaderboard: best public, latest, or a selected one? | User → Google Form | open |
 | Q6 | Documentation length: guidelines say 1–2 pages, problem statement says no page limit. Confirm that both a short summary and the full template are acceptable | User → Google Form | open |
 | Q7 | Did the team receive AWS credits (SageMaker)? A g5 instance (A10G 24 GB, bf16) would be much faster than a Kaggle T4. Unverified; one participant repo mentions per-participant credits | User | open |
-| Q8 | Actual dataset size (one participant repo mentions ~2.5 GB / millions of pairs; unverified). Decides whether the scale guard is needed | EDA E1 | open |
+| Q8 | Actual dataset size. Decides whether the scale guard is needed | EDA E1 | **Resolved:** ~2.4 GB, millions of rows per file (see SS5 2026-09-26 17:15 IST) — scale guard ON |
 
 ## 11. Submission compatibility checklist (verified against the problem statement and official guidelines, 2026-09-26)
 

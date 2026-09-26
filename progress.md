@@ -1,17 +1,18 @@
 # progress.md — Live task board
 
 > Updated at the end of every task (see `CLAUDE.md` §2). Timestamps in IST.
-> **Last updated:** 2026-09-26 15:45 IST
+> **Last updated:** 2026-09-26 17:20 IST
 
 ---
 
 ## Current focus
 
-**Phase 0: Setup.** Next: **Prompt 1** (repo + Kaggle automation + core utils + EDA + model download). The user does the manual pre-flight first (dataset, Kaggle credentials, `CLAUDE.local.md`).
+**Phase 0: Setup — Prompt 1, in progress.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`), config, tests (16/16 passing incl. the 0.714 worked example) and `tools/kaggle_ops.py` are done and committed. **Blocked on Kaggle write-auth** before continuing to dataset upload (`er-data`/`er-code`), NB00 model download, and EDA (EDA is now planned as a Kaggle CPU kernel, not local — see Blockers).
 
 ## Blockers
 
-- [ ] Dataset not yet available (train/test TSVs + `utils/validate_submission.py`) → needed for everything
+- [ ] **Kaggle write-auth failing on both runners.** `kaggle datasets create` returns `401 - Unauthorized` for every username/key/prefix combination tried across R1 and R2 (8/8 combinations, all 401) — not a runner mix-up. `datasets list --mine` / `datasets download` are NOT valid auth checks — both succeed with a fake key too, verified directly. **Needs the user to regenerate a fresh API token per account** at kaggle.com/settings/api and hand over (or place) the new kaggle.json files. Blocks: dataset upload (`er-data`, `er-code`), NB00 (model download), NB01 EDA, and everything downstream. See `CLAUDE.local.md` (git-ignored) for the full test matrix and account details.
+- [ ] Dataset present locally (`student_resource/`, 2.4 GB, confirmed 2026-09-26) but **local RAM is only ~822 MB free of 7.9 GB** — EDA and all other CPU-heavy steps must run as a Kaggle CPU kernel (NB01 etc.), not locally. Local machine is code-authoring + unit tests + git only.
 - [x] Deadline time known: **27 Sep 23:59 IST**; freeze 19:30 IST; final upload by 21:00 IST
 - [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). Not blocking; fallbacks exist
 
@@ -32,19 +33,19 @@
 - [x] Context files created (`CLAUDE.md`, `memory.md`, `progress.md`, `architecture.md`)
 - [x] Compatibility check against the problem statement + official guidelines PDF → `memory.md` §11
 - [ ] Send Google Form questions Q3, Q5, Q6 (`memory.md` §10)
-- [ ] Repo skeleton created as a **git repo** (`code/business_entity_resolution/` per `architecture.md` §3; all code under `src/`)
-- [ ] `src/io_utils.py` (safe TSV loaders/writers + assertions)
-- [ ] `src/metrics.py` (official F0.5 scorer + unit test = 0.714 example; LOCO harness; bootstrap)
-- [ ] `src/check_outputs.py` (pre-flight checks)
-- [ ] `configs/default.yaml` (at `src/configs/default.yaml`)
-- [ ] Upload the dataset to Kaggle as `er-data`; upload code as `er-code`
-- [ ] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B (and Reranker-0.6B fallback) → Kaggle dataset `er-models`
+- [x] Repo skeleton created as a **git repo** (`code/business_entity_resolution/` per `architecture.md` §3; all code under `src/`) — commit `28628ed`
+- [x] `src/io_utils.py` (safe TSV loaders/writers + assertions) — commit `2b19ebf`
+- [x] `src/metrics.py` (official F0.5 scorer + unit test = 0.714 example; bootstrap_diff; LOCO/blocking/error-bucket helpers stubbed, pending Prompt 2+) — commit `2b19ebf`
+- [x] `src/check_outputs.py` (pre-flight checks) — commit `2b19ebf`
+- [x] `configs/default.yaml` (at `src/configs/default.yaml`) — commit `2b19ebf`
+- [ ] Upload the dataset to Kaggle as `er-data`; upload code as `er-code` — **blocked on Kaggle write-auth** (see Blockers)
+- [ ] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B (and Reranker-0.6B fallback) → Kaggle dataset `er-models` — blocked on the same
 
 ### Phase 1: Data understanding — Prompt 1 (target: 16:30–17:30)
-- [ ] **NB01 EDA**: E1–E12 + shortcut check → write the findings into `memory.md` §6
-- [ ] Measure dataset scale (Q8) → decide whether the scale guard is on (`memory.md` §5)
-- [ ] Decide the one-owner mode (E4) and within-country blocking (E5) → `memory.md` §5
-- [ ] Measure the all-empty floor on train
+- [ ] **NB01 EDA**: E1–E12 + shortcut check → write the findings into `memory.md` §6. **Runs as a Kaggle CPU kernel** (local RAM too tight); blocked on Kaggle write-auth to push the kernel. Raw row counts already measured locally via `wc -l` (fast, no pandas): see `memory.md` §5/§6 E1.
+- [x] Measure dataset scale (Q8) → decide whether the scale guard is on (`memory.md` §5) — **ON**, ~2.4 GB / millions of rows per file
+- [ ] Decide the one-owner mode (E4) and within-country blocking (E5) → `memory.md` §5 — needs the full EDA kernel
+- [ ] Measure the all-empty floor on train — needs the full EDA kernel
 
 ### Phase 2: Foundations — Prompt 2 (target: 17:30–19:00)
 - [ ] `src/normalize.py` (Step 2) + unit tests (accents, ligatures, initials, numbers, landmarks, fold)

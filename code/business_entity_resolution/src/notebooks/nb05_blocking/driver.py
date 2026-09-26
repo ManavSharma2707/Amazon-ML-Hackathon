@@ -32,6 +32,7 @@ NO_DENSE = globals().get("NO_DENSE", False)
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
 BC = CONFIG["blocking"]
+CHUNK_S1 = int(os.environ.get("ER_CHUNK_S1", 200_000))  # S1 rows per union/feature/prune chunk (memory bound)
 COLS = ["entity_id", "country", "norm_name", "fold_name", "norm_addr", "fold_addr", "house_number"]
 
 
@@ -99,33 +100,60 @@ def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> di
     return out
 
 
-def build_union(split, s1, pool, q_rows, emb_dirs):
-    """All channels -> union frame with cheap features for the queried rows.
-
-    emb_dirs: {"frozen": (dir, prefix), "dense": (dir, prefix)} — the dense
-    channel/cosine source for these queries.
-    """
-    ddir, dprefix = emb_dirs
-    t0 = time.time()
-    parts = {}
-    if not NO_DENSE:
-        parts = dense_parts(ddir, dprefix, split, q_rows, len(s1))
-        kaggle_env.log(f"  {split}: dense parts {len(parts['dense'][0]):,} + reverse {len(parts['reverse'][0]):,}")
-    parts.update(sparse_parts(s1, pool, q_rows))
-    u = blocking.union_channels(parts, len(pool))
-    del parts
-    gc.collect()
+def _features(u, split, emb_src):
+    """Add dense cosine (or NaN) and per-S1 gap features to a union frame, in place."""
     if NO_DENSE:
         u["dense_cos"] = np.float32(np.nan)
     else:
+        ddir, dprefix = emb_src
         q_emb = np.load(ddir / f"{dprefix}emb_{split}_S1.npy", mmap_mode="r")
-        p_emb = np.load(ddir / f"{dprefix}emb_{split}_pool.npy")
+        p_emb = np.load(ddir / f"{dprefix}emb_{split}_pool.npy", mmap_mode="r")
         blocking.add_dense_cos(u, q_emb, p_emb)
-        del p_emb
-        gc.collect()
     blocking.add_gap_features(u)
-    kaggle_env.log(f"  {split}: union {len(u):,} pairs for {len(q_rows):,} S1 ({time.time() - t0:.0f}s)")
-    return u
+
+
+def build_candidates(split, s1, pool, q_rows, emb_src, model=None, chunk=CHUNK_S1):
+    """All channels -> union -> cheap features; pruned by `model` if given.
+
+    Channel lists are computed once for all queried rows (compact arrays);
+    union + features + pre-ranking run over chunks of `chunk` S1 rows so peak
+    memory stays bounded (NB05 sparse v3 was OOM-killed building a 48M-pair
+    union with features for one country at once).
+
+    Outputs: model None -> the full union frame (train: needed to fit the
+    pre-ranker); model given -> the concatenated pruned frames.
+    """
+    t0 = time.time()
+    parts = {}
+    if not NO_DENSE:
+        ddir, dprefix = emb_src
+        parts = dense_parts(ddir, dprefix, split, q_rows, len(s1))
+        kaggle_env.log(f"  {split}: dense parts {len(parts['dense'][0]):,} + reverse {len(parts['reverse'][0]):,}")
+    parts.update(sparse_parts(s1, pool, q_rows))
+    if model is None:
+        u = blocking.union_channels(parts, len(pool))
+        del parts
+        gc.collect()
+        _features(u, split, emb_src)
+        kaggle_env.log(f"  {split}: union {len(u):,} pairs for {len(q_rows):,} S1 ({time.time() - t0:.0f}s)")
+        return u
+    chunk_of = np.full(len(s1), -1, dtype=np.int32)
+    chunk_of[q_rows] = np.arange(len(q_rows)) // chunk
+    out, n_union = [], 0
+    for ci in range(int(chunk_of[q_rows].max()) + 1 if len(q_rows) else 0):
+        sub = {c: tuple(a[chunk_of[v[0]] == ci] for a in v) for c, v in parts.items()}
+        u = blocking.union_channels(sub, len(pool))
+        del sub
+        _features(u, split, emb_src)
+        n_union += len(u)
+        score = model.predict(u[blocking.PRUNE_FEATURES].to_numpy(np.float32), num_threads=N_JOBS)
+        out.append(blocking.prune(u, score, BC["prune_top"]))
+        del u, score
+        gc.collect()
+    kaggle_env.log(f"  {split}: union {n_union:,} pairs -> pruned for {len(q_rows):,} S1 ({time.time() - t0:.0f}s)")
+    pr = pd.concat(out, ignore_index=True) if out else None
+    pr.attrs["n_union"] = n_union
+    return pr
 
 
 def true_keys_for(s1, pool, pairs, q_rows):
@@ -210,12 +238,12 @@ def main() -> None:
         for h in ("A", "B"):
             src = (ft_dir, "ft_") if h == "B" else (frozen_dir, "")
             kaggle_env.log(f"train half {h}: {len(q[h]):,} S1 queries (dense: {src[1] or 'frozen '}vectors)")
-            unions[h] = build_union("train", s1, pool, q[h], src)
+            unions[h] = build_candidates("train", s1, pool, q[h], src)
     else:
         # One pass over the pool for both halves (hashing the 10M-row pool is the cost), then split.
         both = np.sort(np.concatenate([q["A"], q["B"]]))
         kaggle_env.log(f"train halves A+B: {len(both):,} S1 queries in one pass")
-        u = build_union("train", s1, pool, both, (frozen_dir, ""))
+        u = build_candidates("train", s1, pool, both, (frozen_dir, ""))
         in_a = np.isin(u["q_row"].to_numpy(), q["A"])
         unions["A"] = u[in_a].reset_index(drop=True)
         unions["B"] = u[~in_a].reset_index(drop=True)
@@ -253,14 +281,13 @@ def main() -> None:
     for c in sorted(set(s1_cty.tolist())):
         qr = np.flatnonzero(s1_cty == c).astype(np.int32)
         kaggle_env.log(f"test {c!r}: {len(qr):,} S1 queries")
-        u = build_union("test", s1, pool, qr, src)
-        pr = blocking.prune(u, model.predict(u[blocking.PRUNE_FEATURES].to_numpy(np.float32), num_threads=N_JOBS), BC["prune_top"])
+        pr = build_candidates("test", s1, pool, qr, src, model=model)
         cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
-        per_country[c] = {"n_s1": int(len(qr)), "union_per_s1_mean": round(len(u) / len(qr), 2),
+        per_country[c] = {"n_s1": int(len(qr)), "union_per_s1_mean": round(pr.attrs["n_union"] / len(qr), 2),
                           "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
                           "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
         outs.append(to_cands(pr, s1, pool))
-        del u, pr
+        del pr
         gc.collect()
     cands = pd.concat(outs, ignore_index=True)
     assert cands["s1_id"].nunique() <= len(s1)

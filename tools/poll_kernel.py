@@ -19,7 +19,9 @@ def main() -> None:
     _, user = kaggle_ops.runner_config(runner)
     while True:
         out = kaggle_ops._run_kaggle(["kernels", "status", f"{user}/{slug}"], runner, check=False).stdout.strip()
-        if "RUNNING" not in out and "QUEUED" not in out:
+        # Exit only on a terminal status: an empty/garbled reply (transient API
+        # hiccup) must not look like completion.
+        if any(t in out for t in ("COMPLETE", "ERROR", "CANCEL")):
             print(out.replace(user, "<user>"))
             return
         time.sleep(interval)

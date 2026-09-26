@@ -21,7 +21,7 @@
 
 **Prompt 3 in progress (03:35 IST).** Code done + unit-tested + local sample smoke runs: `explain_diff`, `features`, `stage1`, `decoder`, `exclusivity`, streaming `check_outputs`, `judge_data`, `judge_train`; kernels NB06 (`er-nb06-features-stage1`), NB09a (`er-nb09a-decode-submit`), NB06b (`er-nb06b-judge-data`), NB07 (+dry). **Running:** NB06 v1 on R1 (pushed ~03:15 IST, on NB05 v4 or v5 output — whichever Kaggle mounted), NB07 dry on R2 (sample-built `er-judge-inputs` v1). **Next:** NB06 done -> push NB09a + NB06b on R1 -> fetch TSVs -> check_outputs + validator -> commit + tag sub-01; relay real judge inputs -> NB07 full on R2. Local disk was full (freed 2.2 GB of stale upload zips; ~2 GB free).
 
-**Prompt 2 (foundations + blocking) done except the G1 target.** NB02 v1 complete. Blocking = sparse only (dense retrieval infeasible at ~400 rec/s). `er-nb05-blocking-sparse` **v4 is the current usable candidate set** (B pair recall 0.9585, all test S1 covered, ~50 cands/S1; commit `d066537`); **v5** (+ cross name x address pairs, look-alike digit folding) is running on R1 (pushed 2026-09-27 02:55 IST, ~75 min). **Next (Prompt 3): features + stage-1 + SAFETY SUBMISSION #1 — there is still no submission.** Pending user decision: train-only vs per-run test statistics (Q3).
+**Prompt 2 (foundations + blocking) done except the G1 target.** NB02 v1 complete. Blocking = sparse only (dense retrieval infeasible at ~400 rec/s). `er-nb05-blocking-sparse` **v4 is the current usable candidate set** (superseded) → **v5 is the current candidate set** (B pair recall 0.9733: US 0.982 / India 0.959; entity-complete 0.916; all test S1 covered, 50 cands/S1; commit `2801f74`). **Next (Prompt 3): features + stage-1 + SAFETY SUBMISSION #1 — there is still no submission.** Pending user decision: train-only vs per-run test statistics (Q3).
 
 ## Blockers
 
@@ -31,7 +31,7 @@
 - [x] Deadline time known: **27 Sep 23:59 IST**; freeze 19:30 IST; final upload by 21:00 IST
 - [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). **Q3 now matters:** NB02 `stats_test` and NB05 TF-IDF df/caps on test use test's own (unlabelled) token counts; a `train_only` path is not yet implemented in NB05 — user asked to decide (2026-09-27 01:15 IST)
 - [ ] **No submission exists yet** (plan had safety #1 at 26 Sep 22:30). Top priority for Prompt 3
-- [ ] Kernel outputs are latest-version only: if `er-nb05-blocking-sparse` v5 errors, its output replaces v4's — re-push the v4 config (commit `d066537`) before Prompt 3 uses it
+- [x] v5 completed OK, so its output (current) is the one `kernel_sources` attaches. Rule stays: record the last good config's commit (v5 = `2801f74`)
 
 ## Submission budget (max 5 per day, resets daily; unused ones are lost)
 
@@ -77,7 +77,7 @@
 ### Phase 3: Blocking — Prompt 2 (target: 19:00–21:00)
 - [x] `src/blocking.py`: dense, reverse dense, char TF-IDF name/address, rare-token key (norm+fold), house-number+street key; LightGBM pre-ranker (trained on A) pruning to top-50 — commit `ad14726`
 - [x] Blocking report (pair/entity-complete recall union vs pruned, RR, cands/S1 mean+p95, per-channel found/unique, per country; test counts) + `missed_B.tsv`. Scrambled: sparse char/pair channels are permutation-invariant by construction; no dense channel to test
-- [~] **Gate G1**: v4 B pair recall **0.9585** — passes hard min 0.95, misses 0.99 target; v5 running
+- [~] **Gate G1**: v5 B pair recall **0.9733** — passes hard min 0.95, misses 0.99 target (next levers: larger union re-ranked by stage-1; empty-address and native-script misses)
 - [~] **NB04** code + kernels written (`nb04_finetune`, `_dry`, `nb04b_ft_encode`), unit-tested, **not pushed**: moot while dense retrieval is infeasible (re-encoding test alone ~8 h)
 - [~] **Gate G2**: N/A for now (no dense channel in blocking). Could return as a pair *feature* on the ≤ 20 pre-ranked candidates if GPU time allows
 
@@ -126,7 +126,7 @@
 
 | Gate | Condition | Status | Result |
 |---|---|---|---|
-| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | **partial** | v2 0.724 → v3 0.952 → **v4 0.9585** (US 0.970 / India 0.942); ≥ hard min, < 0.99 target; v5 running |
+| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | **partial** | v2 0.724 → v3 0.952 → v4 0.9585 → **v5 0.9733** (US 0.982 / India 0.959); ≥ hard min, < 0.99 target |
 | G2 | Fine-tuned embedder beats frozen on recall@20, both countries | N/A | dense retrieval infeasible at ~400 rec/s on 2×T4; NB04 not run |
 | G3 | Safety #1 PASS and B F0.5 > floor (target ≥ 0.985) | pending | |
 | G4 | Judge adds a LOCO gain > noise | pending | |
@@ -140,8 +140,8 @@
 |---|---|---|---|---|---|---|---|
 | B1 | 2026-09-27 00:25 | Blocking sparse v2 (name/addr char, rare-token, num key; LGBM pruner top-50), `er-nb05-blocking-sparse` v2 | B pair recall **0.724** (US 0.764 / India 0.664), union 0.726, entity-complete 0.498, 29.3 cands/S1 | — | — | no | G1 FAIL; misses were easy pairs → synthetic shared vocabulary (memory E13) |
 | B2 | 2026-09-27 01:10 | + name_pair / addr_pair token-pair channels (k 20, df cap 500), `er-nb05-blocking-sparse` v3 | B pair recall **0.952** (union 0.953), entity-complete 0.867, 48.0 cands/S1 | — | — | yes | addr_pair unique 79.9k, name_pair 42.8k true B pairs; test side OOM-killed on the 48M-pair India union → v4 chunks it |
-| B3 | 2026-09-27 02:45 | chunked test union; pair k 30 / df cap 2000, `er-nb05-blocking-sparse` v4 (67 min) | B pair recall **0.9585** (US 0.970 / India 0.942), union 0.964, entity-complete 0.881, RR 0.999995, 49.8 cands/S1 (p95 50) | — | — | **current** | test: France 49.9 / India 49.9 / US 49.8 cands/S1, 0% S1 without candidates. Missed-B buckets: 65 both-fields-shared (generic/leetspeak), 53 name broken, 49 empty address, 26 pruned out |
-| B4 | 2026-09-27 02:55 | + cross name x address pairs, look-alike digit folding (v5) | running | — | — | ? | local scaled proxy: union 0.992 → 0.994 |
+| B3 | 2026-09-27 02:45 | chunked test union; pair k 30 / df cap 2000, `er-nb05-blocking-sparse` v4 (67 min) | B pair recall **0.9585** (US 0.970 / India 0.942), union 0.964, entity-complete 0.881, RR 0.999995, 49.8 cands/S1 (p95 50) | — | — | superseded by v5 | test: France 49.9 / India 49.9 / US 49.8 cands/S1, 0% S1 without candidates. Missed-B buckets: 65 both-fields-shared (generic/leetspeak), 53 name broken, 49 empty address, 26 pruned out |
+| B4 | 2026-09-27 03:20 | + cross name x address pairs, look-alike digit folding, `er-nb05-blocking-sparse` v5 (96 min, commit `2801f74`) | B pair recall **0.9733** (US 0.982 / India 0.959), union 0.978, entity-complete 0.916, RR 0.999995, 50.0 cands/S1 | — | — | **current** | cross_pair unique 11.6k; test 50 cands/S1 in all 3 countries, 0% without candidates |
 | — | 2026-09-26 21:37 | all-empty floor (train, full dataset) | 0.0558 | — | — | baseline | Singleton rate; nearly identical US (0.05583) vs India (0.05588) |
 
 ---

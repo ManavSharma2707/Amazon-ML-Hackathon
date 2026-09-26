@@ -71,7 +71,9 @@ def dense_parts(emb_dir, prefix: str, split: str, q_rows: np.ndarray, n_s1: int)
 
 def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> dict:
     """Run the four sparse channels per country group; return global-row lists."""
-    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair")}
+    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair", "reverse")}
+    want = np.zeros(len(s1), dtype=bool)
+    want[q_rows] = True
     s1_cty, p_cty = s1["country"].to_numpy(), pool["country"].to_numpy()
     for c in sorted(set(s1_cty[q_rows].tolist())):
         qi = q_rows[s1_cty[q_rows] == c]
@@ -93,6 +95,20 @@ def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> di
             a, b, s, r = blocking.run_sparse_channel(text_fn(q), text_fn(p), kind, k=k, max_df=max_df, n_jobs=N_JOBS)
             parts[ch].append((qi[a].astype(np.int32), pi[b].astype(np.int32), s, r))
             kaggle_env.log(f"    {c!r} {ch}: {len(qi):,} q x {len(pi):,} pool -> {len(a):,} pairs ({time.time() - t0:.0f}s)")
+            gc.collect()
+        rev_k = BC.get("rev_name_k", 0)
+        if rev_k and NO_DENSE:  # the dense run uses this slot for its own reverse lists
+            # Reverse name channel (pool -> S1): each pool record's top-k S1s by name char TF-IDF against ALL S1s
+            # of the country (same competition as on test), kept when that S1 is queried. Catches easy pairs that
+            # lose the forward top-k race to many look-alike names (shared synthetic vocabulary, memory E13).
+            t0 = time.time()
+            sall = np.flatnonzero(s1_cty == c)
+            a, b, sc_, rk_ = blocking.run_sparse_channel(p["norm_name"].tolist(), s1.iloc[sall]["norm_name"].tolist(), "char",
+                                                         k=rev_k, max_df=BC["name_char_max_df"], n_jobs=N_JOBS)
+            srow = sall[b]
+            keep = want[srow]
+            parts["reverse"].append((srow[keep].astype(np.int32), pi[a[keep]].astype(np.int32), sc_[keep], rk_[keep]))
+            kaggle_env.log(f"    {c!r} reverse name_char: {len(pi):,} pool x {len(sall):,} S1 -> {int(keep.sum()):,} kept pairs ({time.time() - t0:.0f}s)")
             gc.collect()
     out = {}
     for ch, v in parts.items():
@@ -171,7 +187,7 @@ def true_keys_for(s1, pool, pairs, q_rows):
 
 def to_cands(pr: pd.DataFrame, s1, pool) -> pd.DataFrame:
     """Pruned union rows -> saved candidate table with entity IDs."""
-    keep = ["bitmask", "n_channels", "dense_rank", "reverse_rank", "name_char_score", "addr_char_score",
+    keep = ["bitmask", "n_channels", "dense_rank", "reverse_rank", "reverse_score", "name_char_score", "addr_char_score",
             "name_tok_score", "num_key_score", "name_pair_score", "addr_pair_score", "cross_pair_score", "dense_cos",
             "cheap_score"]
     out = pr[keep].copy()

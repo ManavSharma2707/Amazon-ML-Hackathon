@@ -177,7 +177,7 @@ def loco_stage1(df, truth, cty, qs) -> dict:
     return out
 
 
-def scrambled_run(recs_dir, s1_dir, df, fold_models, fold_of_row, mask, cal, best, truth, rng, feat_names, judge_cols):
+def scrambled_run(recs_dir, s1_dir, df, fold_models, fold_of_row, mask, cal, best, truth, rng, feat_names, meta_names, judge_cols):
     """Full pipeline on a scrambled B subset (plan SS21.4): stage-1 features, stage-1, collective, combiner (fold models)."""
     import lightgbm as lgb
 
@@ -204,7 +204,7 @@ def scrambled_run(recs_dir, s1_dir, df, fold_models, fold_of_row, mask, cal, bes
     rest = features.pair_features(q[order], p[order], n_jobs=N_JOBS, log=log)
     back = np.empty_like(order)
     back[order] = np.arange(len(order))
-    fx = pd.DataFrame(np.hstack([sub[features.META_FEATURES].to_numpy(np.float32), rest[back]]), columns=features.FEATURES)
+    fx = pd.DataFrame(np.hstack([sub[meta_names].to_numpy(np.float32), rest[back]]), columns=feat_names)
     m1 = lgb.Booster(model_file=str(s1_dir / "stage1_model.txt"))
     p1x = stage1.predict(m1, fx.to_numpy(np.float32), N_JOBS)
     subx = sub[["s1_id", "cand_id", "label"]].assign(p1=p1x)
@@ -212,7 +212,7 @@ def scrambled_run(recs_dir, s1_dir, df, fold_models, fold_of_row, mask, cal, bes
     coll = collective_for(subx, recx)
     jx = sub[judge_cols].reset_index(drop=True) if judge_cols else None
     X, _ = combiner.matrix(fx, p1x, coll, jx.rename(columns={judge_cols[0]: "judge_p"}) if jx is not None else None,
-                           base_names=features.FEATURES)
+                           base_names=feat_names)
     mk = p1x >= P_FLOOR
     # fold per S1 (rows under the floor originally have no fold of their own; S1s never trained on get fold 0)
     fold_by_s1 = dict(zip(df["s1_id"].to_numpy()[fold_of_row >= 0], fold_of_row[fold_of_row >= 0]))
@@ -299,7 +299,7 @@ def main() -> None:
     fb["p1"] = p1b["p1"].to_numpy()
     del p1b
     fb = fb.sort_values("s1_id", kind="stable").reset_index(drop=True)
-    feat_names = features.FEATURES
+    feat_names, meta_names = features.names_from_columns(fb.columns)
     ids = sorted(fb["s1_id"].unique().tolist())
     gt = pd.read_parquet(recs_dir / "gt.parquet")
     truth = gt[gt["s1_id"].isin(set(ids))][["s1_id", "match_id"]]
@@ -381,7 +381,7 @@ def main() -> None:
         jcols = ["judge_p"]
     try:
         metrics_out["scrambled"] = scrambled_run(recs_dir, s1_dir, fb, r["models"], fold_of_row, mask, cal_final, best,
-                                                 truth, rng, feat_names, jcols)
+                                                 truth, rng, feat_names, meta_names, jcols)
     except Exception as e:  # diagnostic only; the submission must not depend on it
         metrics_out["scrambled"] = {"error": repr(e)}
     log(f"scrambled {metrics_out['scrambled']}")

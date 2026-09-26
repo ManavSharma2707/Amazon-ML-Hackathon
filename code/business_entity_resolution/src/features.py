@@ -31,7 +31,7 @@ import pandas as pd
 
 from . import blocking, corpus_stats, explain_diff
 
-SPARSE_CHANNELS = ["name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair"]
+SPARSE_CHANNELS = ["name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair", "reverse"]
 REC_COLS = ["entity_id", "country", "norm_name", "fold_name", "norm_addr", "fold_addr", "name_numbers",
             "addr_numbers", "house_number", "postcodes", "landmark", "name_romanized"]
 
@@ -326,6 +326,18 @@ def time_per_pair(cands: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, loo
     t0 = time.time()
     build_features(sub, s1, pool, lookups, n_jobs=n_jobs, with_py=with_py, log=lambda m: None)
     return (time.time() - t0) / max(len(sub), 1)
+
+
+def names_from_columns(columns) -> tuple[list[str], list[str]]:
+    """(all feature names, meta names) of a saved feature table, in stage-1 order.
+
+    Older NB06 outputs may have fewer blocking-meta columns than META_FEATURES
+    lists now; the rapidfuzz + Python block at the end is always RF + PY.
+    """
+    names = [c for c in columns if c not in ("s1_id", "cand_id", "label", "p1", "pl")]
+    tail = RF_FEATURES + PY_FEATURES
+    assert names[-len(tail):] == tail, "feature table does not end with RF + PY features"
+    return names, names[: -len(tail)]
 
 
 def main() -> None:

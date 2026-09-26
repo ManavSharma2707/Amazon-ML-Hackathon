@@ -140,7 +140,11 @@ def scrambled_run(recs_dir, p1b, cal, best, truth, ids_all, model, rng) -> dict:
     """F0.5 on a B subset with and without the letter scramble (same model, calibrator and decoder)."""
     ids = sorted(rng.choice(np.array(ids_all, dtype=object), min(SCR_S1, len(ids_all)), replace=False).tolist())
     idset = set(ids)
-    fb = io_utils.read_parquet_compact(kaggle_env.find_input("feats_B.parquet"), ["s1_id", "cand_id"] + features.META_FEATURES)
+    fpath = kaggle_env.find_input("feats_B.parquet")
+    import pyarrow.parquet as pq
+
+    _, meta = features.names_from_columns(pq.ParquetFile(fpath).schema_arrow.names)
+    fb = io_utils.read_parquet_compact(fpath, ["s1_id", "cand_id"] + meta)
     fb = fb[fb["s1_id"].isin(idset)].reset_index(drop=True)
     need = set(fb["cand_id"].tolist())
     s1 = io_utils.read_parquet_compact(recs_dir / "records_train_S1.parquet", features.REC_COLS)
@@ -158,7 +162,7 @@ def scrambled_run(recs_dir, p1b, cal, best, truth, ids_all, model, rng) -> dict:
     rest = features.pair_features(q[order], p[order], n_jobs=N_JOBS, log=kaggle_env.log)
     back = np.empty_like(order)
     back[order] = np.arange(len(order))
-    X = np.hstack([fb[features.META_FEATURES].to_numpy(np.float32), rest[back]])
+    X = np.hstack([fb[meta].to_numpy(np.float32), rest[back]])
     pscr = stage1.predict(model, X, N_JOBS)
     scr = fb[["s1_id", "cand_id"]].assign(p1=pscr)
     orig = p1b[p1b["s1_id"].isin(idset)][["s1_id", "cand_id", "p1"]]

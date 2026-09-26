@@ -241,7 +241,7 @@ Cells:
 3. Queries: 250k S1 per half (seeded) against the full train pool; all test S1. Both train halves share one pass over the pool.
 4. Union → cheap features (channel scores/ranks, gaps to the S1's best, union size) → LightGBM pre-ranker trained on Half A (`pruner.txt`) → top-50 per S1, in 200k-S1 chunks (memory bound).
 5. Blocking report on A and B (per country, per channel found/unique, union vs pruned) → **Gate G1**; `missed_B.tsv` (200 missed true B pairs).
-6. **Current version: v4** (B pair recall 0.9585); v5 running. Test-side df statistics come from test's own token counts (`per_run`) — see the Q3 blocker in progress.md.
+6. **Current version: v5** (B pair recall 0.9733; US 0.982 / India 0.959). Test-side df statistics come from test's own token counts (`per_run`) — see the Q3 blocker in progress.md.
 
 ### 6.8 NB06: features + stage-1
 

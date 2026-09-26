@@ -305,9 +305,15 @@ def e9_hard_negatives(s1: pd.DataFrame, s2: pd.DataFrame, s3: pd.DataFrame, matc
     """
     rng = np.random.default_rng(seed)
     records23 = pd.concat([s2, s3], ignore_index=True)
-    # Precompute country groups once instead of re-filtering the full ~10M-row
-    # table inside the loop on every one of the n_s1_sample iterations.
-    country_groups = {country: g for country, g in records23.groupby("country")}
+    # Filter out matched records ONCE here, not inside the loop: `matched_ids`
+    # is a huge set (millions of entries) and pandas re-converts it to a
+    # hashable structure on every `.isin()` call, so calling it once per
+    # n_s1_sample iteration (as an earlier version did) turned an O(1) fixed
+    # cost into an O(n_s1_sample) one -- this was the actual ~9s/iteration
+    # bottleneck (measured: 100 iterations took 923s before this fix).
+    _log(f"  E9: filtering {len(records23):,} candidates against {len(matched_ids):,} matched IDs (once)...")
+    unmatched23 = records23[~records23["entity_id"].isin(matched_ids)]
+    country_groups = {country: g for country, g in unmatched23.groupby("country")}
     s1_sample = s1.sample(n=min(n_s1_sample, len(s1)), random_state=seed)
     examples = []
     near_dup_count = 0
@@ -319,7 +325,6 @@ def e9_hard_negatives(s1: pd.DataFrame, s2: pd.DataFrame, s3: pd.DataFrame, matc
         if same_country is None or same_country.empty:
             continue
         cand = same_country.sample(n=min(n_cand_sample, len(same_country)), random_state=int(rng.integers(1_000_000)))
-        cand = cand[~cand["entity_id"].isin(matched_ids)]
         if cand.empty:
             continue
         # difflib (stdlib) ratio() on a 0-100 scale, as an approximate stand-in

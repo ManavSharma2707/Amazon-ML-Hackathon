@@ -110,7 +110,7 @@
 
 | Gate | Condition | Status | Result |
 |---|---|---|---|
-| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | in progress | v2 sparse: 0.724 FAIL; v3 (+ token-pair channels) running |
+| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | in progress | v2 0.724 FAIL; v3 0.952 (≥ hard min, < target); v4 (chunked, pair k 30 / cap 2000) running |
 | G2 | Fine-tuned embedder beats frozen on recall@20, both countries | pending | |
 | G3 | Safety #1 PASS and B F0.5 > floor (target ≥ 0.985) | pending | |
 | G4 | Judge adds a LOCO gain > noise | pending | |
@@ -123,6 +123,7 @@
 | # | Time (IST) | Config / change | B F0.5 | LOCO-mean | Scrambled drop | Kept? | Note |
 |---|---|---|---|---|---|---|---|
 | B1 | 2026-09-27 00:25 | Blocking sparse v2 (name/addr char, rare-token, num key; LGBM pruner top-50), `er-nb05-blocking-sparse` v2 | B pair recall **0.724** (US 0.764 / India 0.664), union 0.726, entity-complete 0.498, 29.3 cands/S1 | — | — | no | G1 FAIL; misses were easy pairs → synthetic shared vocabulary (memory E13) |
+| B2 | 2026-09-27 01:10 | + name_pair / addr_pair token-pair channels (k 20, df cap 500), `er-nb05-blocking-sparse` v3 | B pair recall **0.952** (union 0.953), entity-complete 0.867, 48.0 cands/S1 | — | — | yes | addr_pair unique 79.9k, name_pair 42.8k true B pairs; test side OOM-killed on the 48M-pair India union → v4 chunks it |
 | — | 2026-09-26 21:37 | all-empty floor (train, full dataset) | 0.0558 | — | — | baseline | Singleton rate; nearly identical US (0.05583) vs India (0.05588) |
 
 ---

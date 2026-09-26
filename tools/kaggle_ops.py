@@ -3,28 +3,39 @@
 Lives at the repo root (NOT under code/business_entity_resolution/), so it is
 never zipped into the competition submission.
 
-Runner selection is done only through KAGGLE_CONFIG_DIR, read from `.env.local`
-(git-ignored) or the environment. Never hard-code Kaggle usernames or copy
-kaggle.json contents into this file. Every dataset/kernel created here is
-private by default (CLAUDE.md SS6, SS6.1).
+Runner selection is done only through `.env.local` (git-ignored), which maps
+"R1"/"R2" to a KAGGLE_CONFIG_DIR containing a single file, `access_token`
+(Kaggle's newer `KGAT_...` token format — NOT the classic username+key
+kaggle.json, which 401s on write calls with these tokens; see memory.md
+pitfalls, 2026-09-26). Never hard-code Kaggle usernames or token values in
+this file. Every dataset/kernel created here is private by default
+(CLAUDE.md SS6, SS6.1).
+
+Windows CLI quirk (kaggle==2.2.4): `datasets create`/`version`/`kernels push`
+build an internal upload-cache filename by naively concatenating the target
+folder's path with the uploaded filename. If that path contains a `/` or `\\`
+(any multi-segment relative/absolute path), the resulting "filename" is
+treated as a nested path and the upload fails with
+`[Errno 2] No such file or directory`. Workaround: always run these commands
+with `cwd` set to the target folder itself and pass `-p .` (a single-segment
+path with no separator) — this module does that everywhere it uploads.
 
 Usage (from repo root):
     python tools/kaggle_ops.py sync-code --runner R1
     python tools/kaggle_ops.py sync-code --runner R2
     python tools/kaggle_ops.py upsert-dataset --path student_resource --slug er-data --runner R1
     python tools/kaggle_ops.py push --dir code/business_entity_resolution/src/notebooks/nb00_download_models --runner R1
-    python tools/kaggle_ops.py wait --slug manavsharma2707/nb00-download-models --runner R1
-    python tools/kaggle_ops.py fetch-output --slug manavsharma2707/nb00-download-models --runner R1 --dest reports/raw/nb00
+    python tools/kaggle_ops.py wait --slug <username>/nb00-download-models --runner R1
+    python tools/kaggle_ops.py fetch-output --slug <username>/nb00-download-models --runner R1 --dest reports/raw/nb00
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -81,21 +92,41 @@ def _python_exe() -> str:
     return env.get("PYTHON_EXE", sys.executable)
 
 
-def _run_kaggle(args: list[str], runner: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a `kaggle` CLI subcommand scoped to one runner's credentials.
+def _read_token(runner: str) -> str:
+    """Read the `KGAT_...` API token for a runner from its config dir.
 
-    Inputs: args - CLI args after "kaggle" (e.g. ["kernels", "status", slug]);
-            runner - "R1" or "R2"; check - raise on non-zero exit if True.
-    Outputs: the completed subprocess (stdout/stderr captured as text).
-    Never prints or logs the resolved KAGGLE_CONFIG_DIR contents.
+    Inputs: runner - "R1"/"R2".
+    Outputs: the token string, read from `<config_dir>/access_token`.
+    Never printed or logged by any caller of this function.
     """
     config_dir, _ = runner_config(runner)
-    import os
+    token_path = Path(config_dir) / "access_token"
+    if not token_path.exists():
+        raise FileNotFoundError(
+            f"{token_path} not found. Generate a token at kaggle.com/settings/api "
+            "and save it there (one line, no trailing content)."
+        )
+    return token_path.read_text(encoding="utf-8").strip()
 
+
+def _run_kaggle(
+    args: list[str], runner: str, check: bool = True, cwd: Path | None = None
+) -> subprocess.CompletedProcess:
+    """Run a `kaggle` CLI subcommand authenticated as one runner.
+
+    Inputs: args - CLI args after "kaggle" (e.g. ["kernels", "status", slug]);
+            runner - "R1" or "R2"; check - raise on non-zero exit if True;
+            cwd - working directory for the subprocess (needed for upload
+            commands, see module docstring's Windows CLI quirk).
+    Outputs: the completed subprocess (stdout/stderr captured as text).
+    Never prints or logs the resolved token.
+    """
     env = os.environ.copy()
-    env["KAGGLE_CONFIG_DIR"] = config_dir
+    env["KAGGLE_API_TOKEN"] = _read_token(runner)
     cmd = [_python_exe(), "-m", "kaggle"] + args
-    result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True)
+    result = subprocess.run(
+        cmd, cwd=str(cwd) if cwd else REPO_ROOT, env=env, capture_output=True, text=True
+    )
     if check and result.returncode != 0:
         raise RuntimeError(
             f"kaggle {' '.join(args)} failed (runner={runner}):\n{result.stdout}\n{result.stderr}"
@@ -118,19 +149,19 @@ def upsert_private_dataset(local_dir: Path | str, slug: str, runner: str, messag
     """Create or version a private Kaggle dataset from a local folder.
 
     Writes a temporary dataset-metadata.json (owner/slug set to this runner's
-    username) directly into `local_dir`, uploads, then removes the metadata
-    file so it never lingers in a folder that also gets zipped for submission.
+    username) directly into `local_dir`, uploads with `cwd=local_dir` and
+    `-p .` (Windows path-bug workaround, see module docstring), then removes
+    the metadata file so it never lingers in a folder that also gets zipped
+    for submission.
 
     Inputs: local_dir - folder to upload; slug - dataset slug (e.g. "er-code");
             runner - "R1"/"R2"; message - version message (only used on update).
     Outputs: the dataset id ("<username>/<slug>") that was created/updated.
     """
-    local_dir = Path(local_dir)
+    local_dir = Path(local_dir).resolve()
     _, username = runner_config(runner)
     meta_path = local_dir / "dataset-metadata.json"
-    meta_backup = None
-    if meta_path.exists():
-        meta_backup = meta_path.read_bytes()
+    meta_backup = meta_path.read_bytes() if meta_path.exists() else None
     meta = {
         "title": slug,
         "id": f"{username}/{slug}",
@@ -140,11 +171,12 @@ def upsert_private_dataset(local_dir: Path | str, slug: str, runner: str, messag
     try:
         if dataset_exists(slug, runner):
             _run_kaggle(
-                ["datasets", "version", "-p", str(local_dir), "-m", message, "-r", "zip", "-d"],
+                ["datasets", "version", "-p", ".", "-m", message, "-r", "zip", "-d"],
                 runner,
+                cwd=local_dir,
             )
         else:
-            _run_kaggle(["datasets", "create", "-p", str(local_dir), "-r", "zip"], runner)
+            _run_kaggle(["datasets", "create", "-p", ".", "-r", "zip"], runner, cwd=local_dir)
     finally:
         if meta_backup is not None:
             meta_path.write_bytes(meta_backup)
@@ -166,6 +198,9 @@ def sync_code(runner: str, message: str = "sync er-code") -> str:
 def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None = None, timeout: int | None = None) -> str:
     """Push a Kaggle notebook (kernel) from a local folder.
 
+    Runs with `cwd=kernel_dir` and `-p .` (Windows path-bug workaround, see
+    module docstring).
+
     Inputs: kernel_dir - folder containing kernel-metadata.json + notebook source;
             runner - "R1"/"R2"; accelerator - value accepted by `kaggle kernels
             push --accelerator` (verify with `kaggle kernels push --help` and the
@@ -173,12 +208,13 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
             timeout - optional run-time limit in seconds.
     Outputs: stdout from the push command (contains the kernel URL/slug).
     """
-    args = ["kernels", "push", "-p", str(kernel_dir)]
+    kernel_dir = Path(kernel_dir).resolve()
+    args = ["kernels", "push", "-p", "."]
     if accelerator:
         args += ["--accelerator", accelerator]
     if timeout:
         args += ["-t", str(timeout)]
-    result = _run_kaggle(args, runner)
+    result = _run_kaggle(args, runner, cwd=kernel_dir)
     return result.stdout
 
 

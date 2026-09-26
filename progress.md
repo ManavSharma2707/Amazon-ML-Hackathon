@@ -7,11 +7,11 @@
 
 ## Current focus
 
-**Phase 0: Setup — Prompt 1, in progress.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`), config, tests (16/16 passing incl. the 0.714 worked example) and `tools/kaggle_ops.py` are done and committed. **Blocked on Kaggle write-auth** before continuing to dataset upload (`er-data`/`er-code`), NB00 model download, and EDA (EDA is now planned as a Kaggle CPU kernel, not local — see Blockers).
+**Phase 0: Setup — Prompt 1, in progress.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`), config, tests (16/16 passing incl. the 0.714 worked example) and `tools/kaggle_ops.py` are done and committed. Kaggle write-auth is **fixed** (see resolved blocker below); `er-code` uploaded to both runners, `er-data` upload in progress. Next: NB00 model download, then the EDA Kaggle kernel.
 
 ## Blockers
 
-- [ ] **Kaggle write-auth failing on both runners.** `kaggle datasets create` returns `401 - Unauthorized` for every username/key/prefix combination tried across R1 and R2 (8/8 combinations, all 401) — not a runner mix-up. `datasets list --mine` / `datasets download` are NOT valid auth checks — both succeed with a fake key too, verified directly. **Needs the user to regenerate a fresh API token per account** at kaggle.com/settings/api and hand over (or place) the new kaggle.json files. Blocks: dataset upload (`er-data`, `er-code`), NB00 (model download), NB01 EDA, and everything downstream. See `CLAUDE.local.md` (git-ignored) for the full test matrix and account details.
+- [x] **Kaggle write-auth (resolved 2026-09-26 17:45 IST).** Root cause: the `KGAT_...` values are Kaggle's newer API-token format, not classic kaggle.json keys — they must go through `KAGGLE_API_TOKEN`/`access_token`, not `kaggle.json`'s `key` field (see `memory.md` pitfalls). Fixed by upgrading to `kaggle>=2.0`, switching both runners' credential files to `access_token`, and working around a Windows path-handling bug in the CLI's upload commands (`tools/kaggle_ops.py` now runs uploads with `cwd` set to the target folder + `-p .`). Verified end-to-end on both runners with a throwaway create+delete before touching real data.
 - [ ] Dataset present locally (`student_resource/`, 2.4 GB, confirmed 2026-09-26) but **local RAM is only ~822 MB free of 7.9 GB** — EDA and all other CPU-heavy steps must run as a Kaggle CPU kernel (NB01 etc.), not locally. Local machine is code-authoring + unit tests + git only.
 - [x] Deadline time known: **27 Sep 23:59 IST**; freeze 19:30 IST; final upload by 21:00 IST
 - [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). Not blocking; fallbacks exist
@@ -38,8 +38,9 @@
 - [x] `src/metrics.py` (official F0.5 scorer + unit test = 0.714 example; bootstrap_diff; LOCO/blocking/error-bucket helpers stubbed, pending Prompt 2+) — commit `2b19ebf`
 - [x] `src/check_outputs.py` (pre-flight checks) — commit `2b19ebf`
 - [x] `configs/default.yaml` (at `src/configs/default.yaml`) — commit `2b19ebf`
-- [ ] Upload the dataset to Kaggle as `er-data`; upload code as `er-code` — **blocked on Kaggle write-auth** (see Blockers)
-- [ ] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B (and Reranker-0.6B fallback) → Kaggle dataset `er-models` — blocked on the same
+- [x] Upload code as `er-code` to both runners — done 2026-09-26 17:5x IST
+- [ ] Upload the dataset to Kaggle as `er-data` (both runners) — upload in progress (~2.4 GB, running in background)
+- [ ] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B (and Reranker-0.6B fallback) → Kaggle dataset `er-models`
 
 ### Phase 1: Data understanding — Prompt 1 (target: 16:30–17:30)
 - [ ] **NB01 EDA**: E1–E12 + shortcut check → write the findings into `memory.md` §6. **Runs as a Kaggle CPU kernel** (local RAM too tight); blocked on Kaggle write-auth to push the kernel. Raw row counts already measured locally via `wc -l` (fast, no pandas): see `memory.md` §5/§6 E1.

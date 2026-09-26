@@ -189,7 +189,29 @@ Leaderboard scores are ~0.99, so the last 1% is where the competition is decided
 - Kaggle usernames needed in dataset slugs are read at runtime from `CLAUDE.local.md` / environment variables, never hard-coded.
 - Before every commit, run: `git diff --cached | grep -iE "kaggle\.json|KAGGLE_KEY|api[_-]?key|<usernames from CLAUDE.local.md>"`. If anything matches, unstage and fix.
 
-### 6.2 Git and commits
+### 6.3 Kaggle execution pattern
+
+- **Every full-data step is a thin notebook** in `src/notebooks/<nbNN_name>/` (e.g. `nb02_normalize/`). It reads inputs from `/kaggle/input/` and writes outputs plus a small `metrics.json` to `/kaggle/working/`. The laptop never loads full data (8 GB RAM).
+- **Code reaches the kernel by bundling, not by mounting.** The kernel script is generated from `src/` + `driver.py` by `tools/bundle_kernel.py` (see §6 and `architecture.md` §6.1). An earlier idea was to import `src/` from an attached `er-code` dataset. That broke on the mount path, so it is not used. `er-code` is still synced as an archival snapshot of the code each notebook version ran with.
+- **The loop for each step:**
+  1. write or modify the `src/` module;
+  2. run unit tests locally on `sample/` (git-ignored, built by `tools/make_sample.py`);
+  3. sync `er-code` (a new version);
+  4. push the notebook (private; `tools/kaggle_ops.py push` re-bundles it);
+  5. poll every 5 min while doing other work;
+  6. fetch **only** `metrics.json` / report files, never parquet/npy, into `reports/raw/<nb>/`;
+  7. record the results.
+- **Chain notebooks on the SAME runner with `kernel_sources`**: attach the previous notebook's output as an input. Never download big artifacts to the laptop. Input paths are resolved by globbing under `/kaggle/input/` (`src/kaggle_env.py`), never hard-coded.
+- **Cross-runner transfer is only for small files (< 300 MB):** `kaggle kernels output` → local disk → `kaggle datasets create/version` (private) on the other runner. Big artifacts are never relayed. If the other runner needs them, it recomputes them from `er-data`.
+- **Accelerators:**
+  - CPU notebooks for all data steps;
+  - GPU only for embeddings (plus the GPU kNN that must sit next to them), fine-tuning and the judge.
+- **Internet:**
+  - ON is allowed in non-final notebooks, but **only for `pip install`**, never for data lookups;
+  - the final reproducibility notebook runs with internet OFF, using the offline wheels from NB00.
+- **Naming:** Kaggle notebook slugs are generic (`er-nb02-normalize`, `er-nb03-embed`, …). Owner usernames are filled in at push time from `.env.local` (the `PLACEHOLDER/` mechanism), never committed.
+
+### 6.4 Git and commits
 
 - The repo is a **private** git repository. Commit after every working step with a short imperative message (e.g., `Add blocking recall report`).
 - **Commit author = the git user configured in the repo** (`git config user.name/user.email`, set from `CLAUDE.local.md`).

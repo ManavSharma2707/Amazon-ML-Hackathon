@@ -133,7 +133,8 @@ def _run_kaggle(
     env["PYTHONIOENCODING"] = "utf-8"
     cmd = [_python_exe(), "-m", "kaggle"] + args
     result = subprocess.run(
-        cmd, cwd=str(cwd) if cwd else REPO_ROOT, env=env, capture_output=True, text=True
+        cmd, cwd=str(cwd) if cwd else REPO_ROOT, env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",  # CLI prints UTF-8; the Windows default codepage can't decode it
     )
     if check and result.returncode != 0:
         raise RuntimeError(

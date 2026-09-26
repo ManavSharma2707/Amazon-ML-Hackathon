@@ -40,8 +40,14 @@ blocking:
   reverse_k: 5
   tfidf_name_k: 20
   tfidf_addr_k: 15
-  rare_token_cap: 20
+  rare_token_cap: 20      # name_tok channel k (rare-token key)
+  num_key_k: 20           # house number + street token key (replaces the postcode key: postcodes in ~1-2% of records)
+  name_char_max_df: 2000  # index features with df above this are dropped (sparse-product cost)
+  addr_char_max_df: 2000
+  name_tok_max_df: 200    # "rare" = df <= this within the country group
+  num_key_max_df: 200
   prune_top: 50
+  train_sample_per_half: 250000  # train S1 queries per half (A, B); test uses all S1
   within_country: true  # EDA E5: 0/7,638,365 train pairs cross countries (memory.md SS6)
 
 scale_guard:  # millions of records confirmed by EDA E1 (memory.md Q8/SS5)

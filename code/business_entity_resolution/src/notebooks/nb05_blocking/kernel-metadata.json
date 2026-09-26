@@ -1,0 +1,16 @@
+{
+  "id": "PLACEHOLDER/er-nb05-blocking",
+  "title": "er-nb05-blocking",
+  "code_file": "nb05_blocking.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": ["PLACEHOLDER/er-nb02-normalize", "PLACEHOLDER/er-nb03-embed"],
+  "model_sources": []
+}

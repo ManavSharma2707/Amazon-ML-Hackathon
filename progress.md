@@ -1,11 +1,13 @@
 # progress.md — Live task board
 
 > Updated at the end of every task (see `CLAUDE.md` §2). Timestamps in IST.
-> **Last updated:** 2026-09-27 03:05 IST
+> **Last updated:** 2026-09-27 03:35 IST
 
 ---
 
 ## Current focus
+
+**Prompt 3 in progress (03:35 IST).** Code done + unit-tested + local sample smoke runs: `explain_diff`, `features`, `stage1`, `decoder`, `exclusivity`, streaming `check_outputs`, `judge_data`, `judge_train`; kernels NB06 (`er-nb06-features-stage1`), NB09a (`er-nb09a-decode-submit`), NB06b (`er-nb06b-judge-data`), NB07 (+dry). **Running:** NB06 v1 on R1 (pushed ~03:15 IST, on NB05 v4 or v5 output — whichever Kaggle mounted), NB07 dry on R2 (sample-built `er-judge-inputs` v1). **Next:** NB06 done -> push NB09a + NB06b on R1 -> fetch TSVs -> check_outputs + validator -> commit + tag sub-01; relay real judge inputs -> NB07 full on R2. Local disk was full (freed 2.2 GB of stale upload zips; ~2 GB free).
 
 **Prompt 2 (foundations + blocking) done except the G1 target.** NB02 v1 complete. Blocking = sparse only (dense retrieval infeasible at ~400 rec/s). `er-nb05-blocking-sparse` **v4 is the current usable candidate set** (B pair recall 0.9585, all test S1 covered, ~50 cands/S1; commit `d066537`); **v5** (+ cross name x address pairs, look-alike digit folding) is running on R1 (pushed 2026-09-27 02:55 IST, ~75 min). **Next (Prompt 3): features + stage-1 + SAFETY SUBMISSION #1 — there is still no submission.** Pending user decision: train-only vs per-run test statistics (Q3).
 

@@ -1,0 +1,16 @@
+{
+  "id": "PLACEHOLDER/er-nb09a-decode-submit",
+  "title": "er-nb09a-decode-submit",
+  "code_file": "nb09a_decode_submit.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "",
+  "dataset_sources": ["PLACEHOLDER/er-data"],
+  "competition_sources": [],
+  "kernel_sources": ["PLACEHOLDER/er-nb02-normalize", "PLACEHOLDER/er-nb06-features-stage1", "PLACEHOLDER/nb00-download-models"],
+  "model_sources": []
+}

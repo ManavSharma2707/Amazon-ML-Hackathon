@@ -117,6 +117,32 @@ def write_id_list_tsv(
             f.write(f"{s1}\t{','.join(id_list)}\n")
 
 
+def _arrow_strings(t):
+    """pyarrow types_mapper: string columns stay Arrow-backed; other types convert as usual."""
+    import pyarrow as pa
+
+    return pd.ArrowDtype(t) if pa.types.is_string(t) or pa.types.is_large_string(t) else None
+
+
+def read_parquet_compact(path: str | Path, columns: list[str] | None = None) -> pd.DataFrame:
+    """Read Parquet with Arrow-backed string columns (no per-value Python objects).
+
+    10M-row record tables then take a few GB instead of ~10 GB, and forked
+    workers do not copy-on-write them. Numeric columns stay NumPy (NaN intact).
+    """
+    import pyarrow.parquet as pq
+
+    return pq.read_table(path, columns=columns).to_pandas(types_mapper=_arrow_strings)
+
+
+def iter_parquet_compact(path: str | Path, batch_rows: int, columns: list[str] | None = None):
+    """Yield DataFrames of up to `batch_rows` rows (Arrow-backed strings) from a Parquet file."""
+    import pyarrow.parquet as pq
+
+    for rb in pq.ParquetFile(path).iter_batches(batch_size=batch_rows, columns=columns):
+        yield rb.to_pandas(types_mapper=_arrow_strings)
+
+
 def load_config(path: str | Path) -> dict:
     """Load a YAML config file.
 

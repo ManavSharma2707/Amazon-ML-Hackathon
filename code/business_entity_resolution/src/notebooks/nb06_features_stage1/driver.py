@@ -29,15 +29,11 @@ Outputs in /kaggle/working:
 """
 
 import gc
-import importlib
 import os
-import subprocess
-import sys
 import time
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
 
 WORK = kaggle_env.WORK_DIR
@@ -53,29 +49,9 @@ REC_COLS = features.REC_COLS
 CAND_COLS = ["s1_id", "cand_id", "bitmask", "n_channels", "cheap_score"] + [f"{c}_score" for c in features.SPARSE_CHANNELS]
 
 
-def ensure_rapidfuzz() -> None:
-    """Install rapidfuzz from NB00's offline wheels if the image lacks it (internet OFF)."""
-    try:
-        importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018  (needs rapidfuzz >= 3.6)
-        return
-    except (ImportError, AttributeError):
-        pass
-    wheels = kaggle_env.find_input("wheels")
-    kaggle_env.log(f"installing rapidfuzz from {wheels}")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "--no-index", "--find-links", str(wheels), "rapidfuzz"],
-                   check=True)
-    importlib.invalidate_caches()
-    importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018
-
-
-def _arrow_strings(t):
-    """types_mapper: strings stay Arrow-backed (compact, no Python objects); other types as usual."""
-    return pd.ArrowDtype(t) if pa.types.is_string(t) or pa.types.is_large_string(t) else None
-
-
 def read_pq(path, columns=None) -> pd.DataFrame:
-    """Parquet -> DataFrame with Arrow-backed string columns (10M-row record tables stay a few GB)."""
-    return pq.read_table(path, columns=columns).to_pandas(types_mapper=_arrow_strings)
+    """Parquet -> DataFrame with Arrow-backed string columns (io_utils)."""
+    return io_utils.read_parquet_compact(path, columns)
 
 
 def load_records(recs_dir, split: str):
@@ -111,8 +87,8 @@ def iter_s1_batches(path, n_rows: int):
     """
     seen: set = set()
     carry = None
-    for rb in pq.ParquetFile(path).iter_batches(batch_size=n_rows, columns=cand_columns(path)):
-        df = fill_missing(rb.to_pandas(types_mapper=_arrow_strings))
+    for df in io_utils.iter_parquet_compact(path, n_rows, cand_columns(path)):
+        df = fill_missing(df)
         if carry is not None:
             df = pd.concat([carry, df], ignore_index=True)
         tail = (df["s1_id"] == df["s1_id"].iloc[-1]).to_numpy(dtype=bool)
@@ -201,7 +177,7 @@ def main() -> None:
     t_start = time.time()
     io_utils.set_seeds(SEED)
     WORK.mkdir(parents=True, exist_ok=True)
-    ensure_rapidfuzz()
+    kaggle_env.ensure_rapidfuzz()
     recs_dir = kaggle_env.find_input("records_train_S1.parquet").parent
     cand_dir = kaggle_env.find_input("cands_test.parquet").parent
     kaggle_env.log(f"records {recs_dir}; cands {cand_dir}; workers {N_JOBS}")

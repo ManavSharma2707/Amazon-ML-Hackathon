@@ -70,6 +70,29 @@ def write_json(obj: dict, path: str | Path) -> None:
     path.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
 
 
+def ensure_rapidfuzz() -> None:
+    """Install rapidfuzz (>= 3.6, for `process.cpdist`) from NB00's offline wheels if missing.
+
+    Kernels run with internet OFF, so the wheel folder of the attached NB00
+    output is the only source. Fails loudly if it cannot be installed.
+    """
+    import importlib
+    import subprocess
+    import sys
+
+    try:
+        importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018
+        return
+    except (ImportError, AttributeError):
+        pass
+    wheels = find_input("wheels")
+    log(f"installing rapidfuzz from {wheels}")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "--no-index", "--find-links", str(wheels),
+                    "rapidfuzz"], check=True)
+    importlib.invalidate_caches()
+    importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018
+
+
 def main() -> None:
     """Print where the dataset would be found (smoke test)."""
     try:

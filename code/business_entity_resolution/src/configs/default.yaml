@@ -91,6 +91,12 @@ combiner:
   num_leaves: 31
   folds: 5
   calibration: isotonic
+  lr: 0.08
+  min_data_in_leaf: 100
+  max_bin: 63
+  feature_fraction: 0.7
+  max_rounds: 1500
+  p_floor: 0.001   # combiner re-scores only pairs with stage-1 p >= this (others keep p1; same on test)
 
 exclusivity: hard  # none | soft | hard; EDA E4: 0/7,638,365 matched IDs shared between two S1s (memory.md SS6) -- still verify on Half B per master plan SS13
 

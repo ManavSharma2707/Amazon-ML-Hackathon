@@ -11,6 +11,8 @@ from __future__ import annotations
 import random
 import string
 
+from . import normalize
+
 
 def make_scrambler(seed: int) -> dict[int, int]:
     """Build a str.translate table for one random a-z permutation (same for upper case).
@@ -36,6 +38,25 @@ def scramble_df(df, table: dict[int, int], cols=("business_name", "business_addr
     for c in cols:
         if c in out:
             out[c] = scramble_texts(out[c].tolist(), table)
+    return out
+
+
+NORM_FIELDS = ["norm_name", "norm_addr", "landmark", "postcodes", "house_number", "addr_numbers", "name_numbers"]
+
+
+def scramble_normalized(df, table: dict[int, int]):
+    """Scramble already-normalised record fields and recompute the phonetic folds on the result.
+
+    Scrambling after normalisation keeps romanised native-script names consistent
+    with their Latin counterparts (both sides get the same permutation).
+    Inputs: record frame with NORM_FIELDS; table. Outputs: scrambled copy.
+    """
+    out = df.copy()
+    for c in NORM_FIELDS:
+        if c in out:
+            out[c] = [str(x).translate(table) for x in df[c].tolist()]
+    out["fold_name"] = [normalize.fold(x) for x in out["norm_name"].tolist()]
+    out["fold_addr"] = [normalize.fold(x) for x in out["norm_addr"].tolist()]
     return out
 
 

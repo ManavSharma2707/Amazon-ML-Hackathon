@@ -65,24 +65,21 @@ def bootstrap_diff(
             n_resamples - bootstrap resample count; seed - RNG seed.
     Outputs: dict with `mean_diff`, `ci90` (tuple), and `excludes_zero` (bool).
     """
+    import numpy as np
+
     ids = sorted(set(scores_a) & set(scores_b))
     assert ids, "scores_a and scores_b share no S1 entities"
-    diffs = [scores_b[i] - scores_a[i] for i in ids]
-    mean_diff = sum(diffs) / len(diffs)
-
-    rng = random.Random(seed)
+    diffs = np.array([scores_b[i] - scores_a[i] for i in ids], dtype=np.float64)
+    rng = np.random.default_rng(seed)
     n = len(diffs)
-    resample_means = []
-    for _ in range(n_resamples):
-        sample = [diffs[rng.randrange(n)] for _ in range(n)]
-        resample_means.append(sum(sample) / n)
-    resample_means.sort()
-    lo = resample_means[int(0.05 * n_resamples)]
-    hi = resample_means[int(0.95 * n_resamples) - 1]
+    # vectorised resampling in blocks (1000 x 250k entities would be slow in pure Python)
+    means = np.concatenate([diffs[rng.integers(0, n, size=(min(100, n_resamples - k), n))].mean(axis=1)
+                            for k in range(0, n_resamples, 100)])
+    lo, hi = np.quantile(means, [0.05, 0.95])
     return {
-        "mean_diff": mean_diff,
-        "ci90": (lo, hi),
-        "excludes_zero": lo > 0 or hi < 0,
+        "mean_diff": float(diffs.mean()),
+        "ci90": (float(lo), float(hi)),
+        "excludes_zero": bool(lo > 0 or hi < 0),
     }
 
 
@@ -91,17 +88,22 @@ def loco_eval(
     eval_fn: Callable,
     entities_by_country: dict[str, list[str]],
 ) -> dict:
-    """Leave-one-country-out evaluation: train on country X, score on country Y, both ways.
+    """Leave-one-country-out evaluation: train on country X, score on country Y, every ordered pair.
 
-    Stub — filled in once the combiner/decoder exist (Prompt 4+). `train_fn`
-    and `eval_fn` are expected to take a list of S1 entity IDs and return a
-    fitted artifact / a {s1_id: score} map respectively.
-
-    Inputs: train_fn, eval_fn - pipeline callables; entities_by_country -
-            {country: [s1_id, ...]} for exactly two countries (Half B).
-    Outputs: dict with per-direction and mean LOCO F0.5. Raises NotImplementedError for now.
+    Inputs: train_fn(ids) -> fitted artifact; eval_fn(artifact, ids) -> mean
+            F0.5 on those ids; entities_by_country - {country: [s1_id, ...]}
+            (Half B). Country labels are only grouping keys here.
+    Outputs: {"X->Y": score, ..., "mean": mean over directions}.
     """
-    raise NotImplementedError("loco_eval: implement once the combiner exists (Prompt 4)")
+    out: dict = {}
+    for x, ids_x in entities_by_country.items():
+        art = train_fn(ids_x)
+        for y, ids_y in entities_by_country.items():
+            if x != y:
+                out[f"{x}->{y}"] = float(eval_fn(art, ids_y))
+    vals = [v for v in out.values()]
+    out["mean"] = sum(vals) / len(vals) if vals else float("nan")
+    return out
 
 
 def blocking_metrics(
@@ -118,21 +120,69 @@ def blocking_metrics(
     raise NotImplementedError("blocking_metrics: implement with blocking.py (Prompt 2)")
 
 
-def error_buckets(
-    pred_map: dict[str, set],
-    true_map: dict[str, set],
-    records: dict | None = None,
-) -> dict:
-    """Bucket wrong entities by failure cause for the error-analysis loop (CLAUDE.md SS4.4).
+BUCKETS = ["false_match_on_singleton", "blocking_miss", "multi_claim_conflict", "chain_branch", "heavy_noise", "other"]
 
-    Stub — buckets (false match on singleton / chain branch / multi-claim
-    conflict / blocking miss / heavy noise / other) need feature/record access
-    not yet available before Prompt 3.
 
-    Inputs: pred_map, true_map - as above; records - optional record lookup for examples.
-    Outputs: dict of bucket -> list of s1_ids. Raises NotImplementedError for now.
+def error_buckets(pred, truth, cands, s1_ids, name_sim=None, number_conflict=None) -> "pd.DataFrame":
+    """Bucket every wrong S1 entity (F0.5 < 1) by its most likely failure cause (CLAUDE.md SS4.4).
+
+    Priority (first match wins):
+      false_match_on_singleton - truly empty, something predicted;
+      blocking_miss            - a true match is missing from the scored candidates;
+      multi_claim_conflict     - a wrong/missed record is predicted for another S1;
+      chain_branch             - a false match with a similar name but conflicting numbers;
+      heavy_noise              - a missed true match (in candidates) with low name similarity;
+      other.
+    Inputs: pred (s1_id, cand_id), truth (s1_id, match_id), cands (s1_id,
+            cand_id [+ name_sim, number_conflict columns]), s1_ids evaluated;
+            name_sim / number_conflict - column names in cands (optional).
+    Outputs: DataFrame s1_id, bucket, n_fp, n_fn, n_miss_blocking.
     """
-    raise NotImplementedError("error_buckets: implement once features/records are available")
+    import numpy as np
+    import pandas as pd
+
+    ids = pd.Index(pd.unique(np.asarray(list(s1_ids))))
+    t = truth[truth["s1_id"].isin(ids)].rename(columns={"match_id": "cand_id"})
+    pr = pred[pred["s1_id"].isin(ids)][["s1_id", "cand_id"]]
+    key = lambda d: d["s1_id"].astype(str) + "|" + d["cand_id"].astype(str)
+    tk, pk, ck = set(key(t)), set(key(pr)), set(key(cands))
+    fp = pr[~key(pr).isin(tk)]
+    fn = t[~key(t).isin(pk)]
+    fn_block = fn[~key(fn).isin(ck)]
+    n_true = t.groupby("s1_id").size().reindex(ids, fill_value=0)
+    n_fp = fp.groupby("s1_id").size().reindex(ids, fill_value=0)
+    n_fn = fn.groupby("s1_id").size().reindex(ids, fill_value=0)
+    n_blk = fn_block.groupby("s1_id").size().reindex(ids, fill_value=0)
+    wrong = (n_fp > 0) | (n_fn > 0)
+    # records predicted for a different S1 than the one being judged
+    owner = pr.groupby("cand_id")["s1_id"].agg(lambda s: set(s))
+    def claimed_elsewhere(d):
+        o = d["cand_id"].map(owner)
+        return np.array([isinstance(x, set) and bool(x - {s}) for x, s in zip(o, d["s1_id"])], dtype=bool)
+    mc = set(fp.loc[claimed_elsewhere(fp), "s1_id"]) | set(fn.loc[claimed_elsewhere(fn), "s1_id"]) if len(fp) + len(fn) else set()
+    cb, hn = set(), set()
+    if name_sim and number_conflict and len(fp):
+        f = fp.merge(cands[["s1_id", "cand_id", name_sim, number_conflict]], on=["s1_id", "cand_id"], how="left")
+        cb = set(f.loc[(f[name_sim] >= 85) & (f[number_conflict] > 0), "s1_id"])
+    if name_sim and len(fn):
+        f = fn.merge(cands[["s1_id", "cand_id", name_sim]], on=["s1_id", "cand_id"], how="inner")
+        hn = set(f.loc[f[name_sim] < 70, "s1_id"])
+    rows = []
+    for s in ids[wrong.to_numpy()]:
+        if n_true[s] == 0:
+            b = "false_match_on_singleton"
+        elif n_blk[s] > 0:
+            b = "blocking_miss"
+        elif s in mc:
+            b = "multi_claim_conflict"
+        elif s in cb:
+            b = "chain_branch"
+        elif s in hn:
+            b = "heavy_noise"
+        else:
+            b = "other"
+        rows.append((s, b, int(n_fp[s]), int(n_fn[s]), int(n_blk[s])))
+    return pd.DataFrame(rows, columns=["s1_id", "bucket", "n_fp", "n_fn", "n_miss_blocking"])
 
 
 def main() -> None:

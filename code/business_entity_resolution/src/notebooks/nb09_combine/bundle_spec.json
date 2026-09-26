@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features", "stage1",
+              "decoder", "exclusivity", "scramble", "collective", "combiner", "metrics", "check_outputs"],
+  "driver": "driver.py",
+  "output": "nb09_combine.py",
+  "config": true
+}

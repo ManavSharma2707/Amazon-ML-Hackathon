@@ -1,13 +1,13 @@
 # progress.md — Live task board
 
 > Updated at the end of every task (see `CLAUDE.md` §2). Timestamps in IST.
-> **Last updated:** 2026-09-26 21:45 IST
+> **Last updated:** 2026-09-27 03:05 IST
 
 ---
 
 ## Current focus
 
-**Phase 0/1: Setup + Data understanding — Prompt 1, essentially done.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`, `eda`), config, tests (27/27 passing), `tools/kaggle_ops.py` and `tools/bundle_kernel.py` are done and committed. `er-code`/`er-data` uploaded to R1 (R2 added as `er-data` collaborator); NB00 completed on both runners (all 3 models downloaded, Apache-2.0 confirmed); NB01 EDA completed on R1 with real findings written into `memory.md` §5/§6 and `default.yaml` updated (one-owner=hard, within-country=true, scale_guard=true). Remaining before Prompt 2: none blocking — R2 still needs `er-data`'s own upload/NB00 output mirrored only if Prompt 2 needs it there.
+**Prompt 2 (foundations + blocking) done except the G1 target.** NB02 v1 complete. Blocking = sparse only (dense retrieval infeasible at ~400 rec/s). `er-nb05-blocking-sparse` **v4 is the current usable candidate set** (B pair recall 0.9585, all test S1 covered, ~50 cands/S1; commit `d066537`); **v5** (+ cross name x address pairs, look-alike digit folding) is running on R1 (pushed 2026-09-27 02:55 IST, ~75 min). **Next (Prompt 3): features + stage-1 + SAFETY SUBMISSION #1 — there is still no submission.** Pending user decision: train-only vs per-run test statistics (Q3).
 
 ## Blockers
 
@@ -15,7 +15,9 @@
 - [x] **Notebook self-sufficiency + mount-path issues (resolved 2026-09-26 ~21:00 IST).** NB01 initially broke on `sys.path.insert` + `from src import` (this Kaggle environment mounts datasets at `/kaggle/input/datasets/<owner>/<slug>/`, not the classic path). Fixed by making every notebook fully self-contained via `tools/bundle_kernel.py` (see `architecture.md` §6.1). Two follow-on bugs also fixed: missing `rapidfuzz` on an internet-OFF kernel (swapped to stdlib `difflib`), and a major perf bug in E9 (`isin()` against a 7.6M-item set called once per loop iteration instead of once — cut an ~80 min projected runtime to ~8 minutes actual).
 - [x] Dataset present locally (`student_resource/`, 2.4 GB, confirmed 2026-09-26); **local RAM only ~750-822 MB free of ~8 GB** — all CPU-heavy work (EDA done, future steps too) runs as a Kaggle CPU kernel, never locally. Local machine is code-authoring + unit tests + git only.
 - [x] Deadline time known: **27 Sep 23:59 IST**; freeze 19:30 IST; final upload by 21:00 IST
-- [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). Not blocking; fallbacks exist
+- [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). **Q3 now matters:** NB02 `stats_test` and NB05 TF-IDF df/caps on test use test's own (unlabelled) token counts; a `train_only` path is not yet implemented in NB05 — user asked to decide (2026-09-27 01:15 IST)
+- [ ] **No submission exists yet** (plan had safety #1 at 26 Sep 22:30). Top priority for Prompt 3
+- [ ] Kernel outputs are latest-version only: if `er-nb05-blocking-sparse` v5 errors, its output replaces v4's — re-push the v4 config (commit `d066537`) before Prompt 3 uses it
 
 ## Submission budget (max 5 per day, resets daily; unused ones are lost)
 
@@ -56,14 +58,14 @@
 - [x] `src/split.py` (A/B stratified by country × match-count bucket; pool records follow their S1; unmatched = shared) — commit `02851b6`
 - [x] **NB02** run → `er-nb02-normalize` v1 (R1, CPU, 57 min, 2026-09-26 23:05 IST): row counts = EDA E1; A 1,213,752 / B 993,069 S1, singleton rate 0.05585 in both; name_empty 0%; romanised India S2 23.5% / S3 13%; house number 90–100%, postcode < 1.3%. Report: `reports/raw/nb02/metrics.json`
 - [ ] **Fix before Prompt 3:** suffix-likeness top list is dominated by typo variants (`limitet`, `drve`) — the frequency sigmoid is too weak; add a min-frequency floor before using it as a feature
-- [ ] **NB03** frozen embeddings (GPU) → `er-emb_v1`
+- [x] **NB03** dry runs (`er-nb03-embed-dry` v1–v3): code clean on 2×T4, embeddings good (pos cos 0.85 vs rand 0.39), but **~400 rec/s** → full run (24M records, ~16 h) **not run**. Dense retrieval dropped from blocking (memory §5)
 
 ### Phase 3: Blocking — Prompt 2 (target: 19:00–21:00)
 - [x] `src/blocking.py`: dense, reverse dense, char TF-IDF name/address, rare-token key (norm+fold), house-number+street key; LightGBM pre-ranker (trained on A) pruning to top-50 — commit `ad14726`
-- [ ] Blocking report: pair recall, entity-complete recall, RR, candidates/S1, per-channel unique contribution, per country, scrambled
-- [ ] **Gate G1**: pair recall ≥ 0.99 on B (hard minimum 0.95)
-- [ ] **NB04** fine-tune embedder on A (GPU) → `er-embedder_v1`
-- [ ] **Gate G2**: fine-tuned beats frozen on recall@20 in both countries
+- [x] Blocking report (pair/entity-complete recall union vs pruned, RR, cands/S1 mean+p95, per-channel found/unique, per country; test counts) + `missed_B.tsv`. Scrambled: sparse char/pair channels are permutation-invariant by construction; no dense channel to test
+- [~] **Gate G1**: v4 B pair recall **0.9585** — passes hard min 0.95, misses 0.99 target; v5 running
+- [~] **NB04** code + kernels written (`nb04_finetune`, `_dry`, `nb04b_ft_encode`), unit-tested, **not pushed**: moot while dense retrieval is infeasible (re-encoding test alone ~8 h)
+- [~] **Gate G2**: N/A for now (no dense channel in blocking). Could return as a pair *feature* on the ≤ 20 pre-ranked candidates if GPU time allows
 
 ### Phase 4: Features + Stage-1 + safety submission #1 — Prompt 3 (target: 21:00–23:30)
 - [ ] `src/explain_diff.py` (Step 7) + unit tests on the relation tests
@@ -110,8 +112,8 @@
 
 | Gate | Condition | Status | Result |
 |---|---|---|---|
-| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | in progress | v2 0.724 FAIL; v3 0.952 (≥ hard min, < target); v4 (chunked, pair k 30 / cap 2000) running |
-| G2 | Fine-tuned embedder beats frozen on recall@20, both countries | pending | |
+| G1 | Blocking pair recall ≥ 0.99 (min 0.95) on B | **partial** | v2 0.724 → v3 0.952 → **v4 0.9585** (US 0.970 / India 0.942); ≥ hard min, < 0.99 target; v5 running |
+| G2 | Fine-tuned embedder beats frozen on recall@20, both countries | N/A | dense retrieval infeasible at ~400 rec/s on 2×T4; NB04 not run |
 | G3 | Safety #1 PASS and B F0.5 > floor (target ≥ 0.985) | pending | |
 | G4 | Judge adds a LOCO gain > noise | pending | |
 | G5 | Final beats safety #2 on LOCO-mean | pending | |
@@ -124,6 +126,8 @@
 |---|---|---|---|---|---|---|---|
 | B1 | 2026-09-27 00:25 | Blocking sparse v2 (name/addr char, rare-token, num key; LGBM pruner top-50), `er-nb05-blocking-sparse` v2 | B pair recall **0.724** (US 0.764 / India 0.664), union 0.726, entity-complete 0.498, 29.3 cands/S1 | — | — | no | G1 FAIL; misses were easy pairs → synthetic shared vocabulary (memory E13) |
 | B2 | 2026-09-27 01:10 | + name_pair / addr_pair token-pair channels (k 20, df cap 500), `er-nb05-blocking-sparse` v3 | B pair recall **0.952** (union 0.953), entity-complete 0.867, 48.0 cands/S1 | — | — | yes | addr_pair unique 79.9k, name_pair 42.8k true B pairs; test side OOM-killed on the 48M-pair India union → v4 chunks it |
+| B3 | 2026-09-27 02:45 | chunked test union; pair k 30 / df cap 2000, `er-nb05-blocking-sparse` v4 (67 min) | B pair recall **0.9585** (US 0.970 / India 0.942), union 0.964, entity-complete 0.881, RR 0.999995, 49.8 cands/S1 (p95 50) | — | — | **current** | test: France 49.9 / India 49.9 / US 49.8 cands/S1, 0% S1 without candidates. Missed-B buckets: 65 both-fields-shared (generic/leetspeak), 53 name broken, 49 empty address, 26 pruned out |
+| B4 | 2026-09-27 02:55 | + cross name x address pairs, look-alike digit folding (v5) | running | — | — | ? | local scaled proxy: union 0.992 → 0.994 |
 | — | 2026-09-26 21:37 | all-empty floor (train, full dataset) | 0.0558 | — | — | baseline | Singleton rate; nearly identical US (0.05583) vs India (0.05588) |
 
 ---

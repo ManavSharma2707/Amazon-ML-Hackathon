@@ -228,13 +228,20 @@ Cells:
 3. Train with `MultipleNegativesRankingLoss` (or the cached variant); custom one-S1-per-batch sampler; scramble augmentation 15–20%; field dropout 10%; lr 2e-5; 1 epoch; fp16; checkpoint every 500 steps.
 4. Encode B + test with the fine-tuned model; run the acceptance test (recall@k per country, scrambled) → `acceptance.json` → **Gate G2**.
 
-### 6.7 NB05: blocking
+### 6.7 NB05: blocking — current kernel `er-nb05-blocking-sparse` (driver `nb05_blocking/driver.py` + define `NO_DENSE`)
 
-1. Channels (all within-country by label equality, EDA E5): dense + reverse dense (NB03 lists; A always frozen, B/test fine-tuned in v2 if G2 passes), char 3–4-gram TF-IDF on name (k 20) and address (k 15), rare-token key on norm + fold name tokens (k 20), house-number + street-token key (k 20; replaces the postcode key: postcodes in ~1–2% of records). Sparse channels drop index features with df above a cap to keep the sparse product tractable.
-2. Queries: 250k S1 per half (seeded sample) against the full train pool; all test S1.
-3. Union → cheap features (channel scores/ranks, dense cosine, gaps to the S1's best) → LightGBM pre-ranker trained on Half A → top-50 per S1.
-4. Blocking report on A and B (per country, per channel unique contribution; union vs pruned recall) → **Gate G1**; `missed_B.tsv` (≤ 200 missed true B pairs) for error bucketing. Scrambled recall for the dense channel comes from NB04's acceptance test (sparse char channels are permutation-invariant by construction).
-5. Current version: see progress.md (v1 = frozen dense).
+1. **Dense retrieval is not used** (Qwen3-0.6B ~400 rec/s on 2×T4 → ~16 h for all records; memory §5/§9). The `er-nb05-blocking` kernel (with NB03 dense lists) stays in the code for a future faster embedder.
+2. Sparse channels, all within-country by label equality (EDA E5); each = hashed TF-IDF + df-capped index + chunked sparse top-k:
+   - `name_char` / `addr_char`: char_wb 3–4-grams (k 20 / 15, df cap 2000);
+   - `name_tok`: rare norm + fold name tokens (k 20, df cap 200);
+   - `num_key`: house number + first street token (k 20, df cap 200);
+   - `name_pair` / `addr_pair`: unordered fold-token pairs (k 30, df cap 2000) — needed because names are built from a shared synthetic vocabulary (memory E13);
+   - `cross_pair` (v5): name token × address token pairs (k 30, df cap 2000);
+   - look-alike digits folded in token/pair keys (v5).
+3. Queries: 250k S1 per half (seeded) against the full train pool; all test S1. Both train halves share one pass over the pool.
+4. Union → cheap features (channel scores/ranks, gaps to the S1's best, union size) → LightGBM pre-ranker trained on Half A (`pruner.txt`) → top-50 per S1, in 200k-S1 chunks (memory bound).
+5. Blocking report on A and B (per country, per channel found/unique, union vs pruned) → **Gate G1**; `missed_B.tsv` (200 missed true B pairs).
+6. **Current version: v4** (B pair recall 0.9585); v5 running. Test-side df statistics come from test's own token counts (`per_run`) — see the Q3 blocker in progress.md.
 
 ### 6.8 NB06: features + stage-1
 

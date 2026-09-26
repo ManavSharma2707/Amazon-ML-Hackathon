@@ -1,0 +1,16 @@
+{
+  "id": "PLACEHOLDER/nb00-download-models",
+  "title": "nb00-download-models",
+  "code_file": "nb00_download_models.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": []
+}

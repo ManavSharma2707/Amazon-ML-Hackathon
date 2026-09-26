@@ -67,10 +67,19 @@ class Embedder:
         self.dim = dim
         self.max_len = max_len
         self.instruction = instruction
+        self.timing = {"tok_s": 0.0, "fwd_s": 0.0, "tokens": 0}
         self.tok = AutoTokenizer.from_pretrained(model_dir, padding_side="left")
         dtype = torch.float16 if device.startswith("cuda") else torch.float32
-        self.model = AutoModel.from_pretrained(model_dir, torch_dtype=dtype, attn_implementation="sdpa").to(device)
+        # transformers 5 renamed `torch_dtype` to `dtype` (the old name may be
+        # ignored), so pass the new name and also cast explicitly: an fp32
+        # model on a T4 is several times slower (NB03 dry run v1: ~400 rec/s).
+        try:
+            model = AutoModel.from_pretrained(model_dir, dtype=dtype, attn_implementation="sdpa")
+        except TypeError:
+            model = AutoModel.from_pretrained(model_dir, torch_dtype=dtype, attn_implementation="sdpa")
+        self.model = model.to(device=device, dtype=dtype)
         self.model.eval()
+        self.param_dtype = str(next(self.model.parameters()).dtype)
 
     def encode_batch(self, texts: list[str]) -> np.ndarray:
         """Encode one batch -> float16 array [len(texts), dim], L2-normalised.
@@ -81,11 +90,18 @@ class Embedder:
         torch = self.torch
         if self.instruction:
             texts = [self.instruction + t for t in texts]
+        t0 = time.perf_counter()
         enc = self.tok(texts, padding=True, truncation=True, max_length=self.max_len, return_tensors="pt").to(self.device)
+        t1 = time.perf_counter()
         with torch.inference_mode():
             hid = self.model(**enc).last_hidden_state[:, -1, : self.dim].float()
             hid = torch.nn.functional.normalize(hid, dim=-1)
-        return hid.to(torch.float16).cpu().numpy()
+        out = hid.to(torch.float16).cpu().numpy()
+        # Cumulative stage timings (tokenise vs forward) for throughput diagnosis.
+        self.timing["tok_s"] += t1 - t0
+        self.timing["fwd_s"] += time.perf_counter() - t1
+        self.timing["tokens"] += int(enc["input_ids"].numel())
+        return out
 
 
 def encode(

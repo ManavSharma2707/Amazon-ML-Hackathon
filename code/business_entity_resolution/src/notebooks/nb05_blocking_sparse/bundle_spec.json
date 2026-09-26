@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "blocking"],
+  "driver": "../nb05_blocking/driver.py",
+  "output": "nb05_blocking_sparse.py",
+  "config": true,
+  "defines": {"NO_DENSE": true}
+}

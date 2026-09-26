@@ -26,6 +26,9 @@ import numpy as np
 import pandas as pd
 
 DENSE_FT = globals().get("DENSE_FT", False)
+# NO_DENSE (kernel er-nb05-blocking-sparse): sparse channels only, no NB03
+# input; dense features are NaN for the pre-ranker (LightGBM handles missing).
+NO_DENSE = globals().get("NO_DENSE", False)
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
 BC = CONFIG["blocking"]
@@ -102,17 +105,22 @@ def build_union(split, s1, pool, q_rows, emb_dirs):
     """
     ddir, dprefix = emb_dirs
     t0 = time.time()
-    parts = dense_parts(ddir, dprefix, split, q_rows, len(s1))
-    kaggle_env.log(f"  {split}: dense parts {len(parts['dense'][0]):,} + reverse {len(parts['reverse'][0]):,}")
+    parts = {}
+    if not NO_DENSE:
+        parts = dense_parts(ddir, dprefix, split, q_rows, len(s1))
+        kaggle_env.log(f"  {split}: dense parts {len(parts['dense'][0]):,} + reverse {len(parts['reverse'][0]):,}")
     parts.update(sparse_parts(s1, pool, q_rows))
     u = blocking.union_channels(parts, len(pool))
     del parts
     gc.collect()
-    q_emb = np.load(ddir / f"{dprefix}emb_{split}_S1.npy", mmap_mode="r")
-    p_emb = np.load(ddir / f"{dprefix}emb_{split}_pool.npy")
-    blocking.add_dense_cos(u, q_emb, p_emb)
-    del p_emb
-    gc.collect()
+    if NO_DENSE:
+        u["dense_cos"] = np.float32(np.nan)
+    else:
+        q_emb = np.load(ddir / f"{dprefix}emb_{split}_S1.npy", mmap_mode="r")
+        p_emb = np.load(ddir / f"{dprefix}emb_{split}_pool.npy")
+        blocking.add_dense_cos(u, q_emb, p_emb)
+        del p_emb
+        gc.collect()
     blocking.add_gap_features(u)
     kaggle_env.log(f"  {split}: union {len(u):,} pairs for {len(q_rows):,} S1 ({time.time() - t0:.0f}s)")
     return u
@@ -176,11 +184,11 @@ def main() -> None:
     io_utils.set_seeds(CONFIG["seed"])
     WORK.mkdir(parents=True, exist_ok=True)
     recs_dir = kaggle_env.find_input("records_train_S1.parquet").parent
-    frozen_dir = kaggle_env.find_input("knn_train_idx.npy").parent
+    frozen_dir = None if NO_DENSE else kaggle_env.find_input("knn_train_idx.npy").parent
     ft_dir = kaggle_env.find_input("ft_knn_test_idx.npy").parent if DENSE_FT else None
     kaggle_env.log(f"records {recs_dir}; frozen {frozen_dir}; ft {ft_dir}; workers {N_JOBS}")
-    metrics: dict = {"dense_ft": DENSE_FT, "blocking_config": BC}
-    report: dict = {"dense_source_B_test": "fine-tuned" if DENSE_FT else "frozen"}
+    metrics: dict = {"dense_ft": DENSE_FT, "no_dense": NO_DENSE, "blocking_config": BC}
+    report: dict = {"dense_source_B_test": "none" if NO_DENSE else ("fine-tuned" if DENSE_FT else "frozen")}
 
     # ---------------- train: A and B query samples ----------------
     s1, pool = load_split(recs_dir, "train")
@@ -195,10 +203,22 @@ def main() -> None:
         q[h] = np.sort(rng.choice(rows, n, replace=False)).astype(np.int32)
     s1_cty = s1["country"].to_numpy()
     unions = {}
-    for h in ("A", "B"):
-        src = (ft_dir, "ft_") if (DENSE_FT and h == "B") else (frozen_dir, "")
-        kaggle_env.log(f"train half {h}: {len(q[h]):,} S1 queries (dense: {src[1] or 'frozen '}vectors)")
-        unions[h] = build_union("train", s1, pool, q[h], src)
+    if DENSE_FT:
+        # A must use frozen vectors and B fine-tuned ones, so build them separately.
+        for h in ("A", "B"):
+            src = (ft_dir, "ft_") if h == "B" else (frozen_dir, "")
+            kaggle_env.log(f"train half {h}: {len(q[h]):,} S1 queries (dense: {src[1] or 'frozen '}vectors)")
+            unions[h] = build_union("train", s1, pool, q[h], src)
+    else:
+        # One pass over the pool for both halves (hashing the 10M-row pool is the cost), then split.
+        both = np.sort(np.concatenate([q["A"], q["B"]]))
+        kaggle_env.log(f"train halves A+B: {len(both):,} S1 queries in one pass")
+        u = build_union("train", s1, pool, both, (frozen_dir, ""))
+        in_a = np.isin(u["q_row"].to_numpy(), q["A"])
+        unions["A"] = u[in_a].reset_index(drop=True)
+        unions["B"] = u[~in_a].reset_index(drop=True)
+        del u, in_a
+        gc.collect()
 
     kaggle_env.log("training the cheap pre-ranker on Half A")
     keys_a, _ = true_keys_for(s1, pool, pairs, q["A"])

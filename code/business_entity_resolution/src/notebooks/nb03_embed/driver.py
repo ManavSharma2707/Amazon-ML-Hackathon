@@ -169,8 +169,24 @@ def main() -> None:
     metrics: dict = {"dry_run": DRY_RUN, "devices": devices, "dim": DIM, "max_len": ECFG["max_len"],
                      "instruction": ECFG["instruction"], "batch": ECFG["batch"]}
 
+    metrics["param_dtype"] = embedders[0].param_dtype
+    kaggle_env.log(f"model param dtype: {embedders[0].param_dtype}")
     if DRY_RUN:
         s1, pool = load_split(recs_dir, "train")
+        # Throughput benchmark: batch size x instruction, with tokenise/forward split.
+        texts = embed.record_texts(pool["raw_name"].iloc[:20000], pool["raw_addr"].iloc[:20000])
+        metrics["bench"] = {}
+        for bs in (128, 512):
+            for label, instr in (("instr", CONFIG["embed"]["instruction"]), ("noinstr", "")):
+                for e in embedders:
+                    e.instruction = instr
+                    e.timing = {"tok_s": 0.0, "fwd_s": 0.0, "tokens": 0}
+                t0 = time.time()
+                embed.encode(texts, embedders, bs)
+                dt = time.time() - t0
+                metrics["bench"][f"bs{bs}_{label}"] = {"rate": round(len(texts) / dt, 1),
+                                                     "timing_gpu0": {k: round(v, 2) for k, v in embedders[0].timing.items()}}
+                kaggle_env.log(f"bench bs={bs} {label}: {metrics['bench'][f'bs{bs}_{label}']}")
         metrics["instruction_ab"] = {}
         for label, instr in (("with_instruction", CONFIG["embed"]["instruction"]), ("no_instruction", "")):
             kaggle_env.log(f"mini retrieval: {label}")

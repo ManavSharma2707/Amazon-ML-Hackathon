@@ -109,9 +109,9 @@ Not zipped: the dataset, `CLAUDE.md`, `memory.md`, `progress.md`, `architecture.
 | `normalize.py` | 2 | `normalize_record`, `extract_numbers`, `split_landmark`, `fold` | raw df → `raw_*`, `norm_*`, `fold_*`, number fields, landmark field |
 | `corpus_stats.py` | 3 | `compute_idf`, `suffix_likeness`, `street_type_likeness` | normalised df → token-stat tables (per run; train-only flag) |
 | `split.py` | 4 | `make_ab_split` | S1 + GT → `split` column (A/B), stratified |
-| `embed.py` | 5 | `encode_records` (full / name / address), `load_embedder` | texts → L2-normalised fp16 matrices |
+| `embed.py` | 5 | `record_texts`, `Embedder` (last-token pooling, MRL), `encode` (multi-GPU threads), `knn_within_groups` (GPU exact kNN, forward + reverse), `pair_recall_at_k` | texts → L2-normalised fp16 256-d vectors; kNN lists |
 | `finetune_embedder.py` | 5 | `build_training_triplets`, `train`, `OneS1PerBatchSampler`, scramble augmentation | Half A → fine-tuned weights |
-| `blocking.py` | 6 | `dense_knn`, `reverse_dense`, `tfidf_knn`, `postcode_key`, `rare_token_key`, `union_and_prune`, `blocking_report` | records + embeddings → candidate pairs (+ channel meta) |
+| `blocking.py` | 6 | `run_sparse_channel` (hashed TF-IDF + chunked sparse top-k; char name/addr, rare-token, number key), `union_channels`, `add_dense_cos`, `train_pruner` (LightGBM on Half A), `prune`, `blocking_report` | records + NB03 kNN lists → pruned candidate pairs (+ channel meta) |
 | `explain_diff.py` | 7 | `token_relation`, `align_tokens`, `explain_features`, `number_features` | pair → feature dict |
 | `features.py` | 8 | `build_pair_features` (groups A–H), multiprocessing | candidates → feature table |
 | `stage1.py` | 9 | `train_oof`, `train_full`, `predict` | A features → A OOF; B/test preds |
@@ -123,23 +123,26 @@ Not zipped: the dataset, `CLAUDE.md`, `memory.md`, `progress.md`, `architecture.
 | `exclusivity.py` | 13 | `hard_one_owner`, `soft_one_owner` | (e, r, p) → adjusted p |
 | `decoder.py` | 14 | `poisson_binomial`, `best_k`, `decode_all` | calibrated p per entity → predicted sets |
 | `metrics.py` | 21 | `f05_entity`, `f05_macro`, `loco_eval`, `bootstrap_diff`, `blocking_metrics`, `error_buckets` | predictions + GT → scores/reports |
-| `scramble.py` | 21 | `make_scrambler`, `scramble_df` | df → scrambled df |
+| `scramble.py` | 21 | `make_scrambler`, `scramble_texts`, `scramble_df` | texts → scrambled texts (a–z permutation) |
+| `kaggle_env.py` | — | `find_input` / `find_input_dir` (glob under /kaggle/input), `log`, `write_json`, `WORK_DIR` | shared by every notebook driver |
 | `check_outputs.py` | 22 | `main` | output TSVs + test dir → PASS/FAIL |
 | `predict.py` | all | `run_inference(config)` | artifacts + test TSVs → `output/*.tsv` |
 
 ---
 
-## 5. Artifacts (Kaggle Datasets), naming and contents
+## 5. Artifacts (Kaggle notebook outputs / datasets), naming and contents
+
+> Revised 2026-09-26 22:25 IST: pipeline artifacts are **notebook outputs chained with `kernel_sources` on the same runner** (CLAUDE.md §6.3), not separately created datasets. The version is the notebook's version number (`er-nb05-blocking` v1, v2…). Model weights + offline wheels = NB00 output (`nb00-download-models`), attached the same way.
 
 | Dataset name | Produced by | Contents | Consumed by |
 |---|---|---|---|
 | `er-data` | user upload | organiser TSVs + `utils/validate_submission.py` | all |
 | `er-code` | user upload (from `code/business_entity_resolution/`) | `src/` (incl. `src/configs/`) | all notebooks |
 | `er-models` | NB00 | `qwen3-emb-0.6b/`, `qwen3-4b/`, `qwen3-reranker-0.6b/` (HF snapshot folders) | NB03, NB04, NB07, NB08, NB11 |
-| `er-norm_vN` | NB02 | `records_train.parquet`, `records_test.parquet`, `gt.parquet`, `split.parquet`, `stats_train.parquet`, `stats_test.parquet` | NB03–NB09 |
-| `er-emb_vN` | NB03 | `frozen_{full,name,addr}_{train,test}.npy`, `ids_{train,test}.parquet` | NB04, NB05, NB06 |
-| `er-embedder_vN` | NB04 | fine-tuned model folder + `ft_full_{train,test}.npy` + `acceptance.json` | NB05, NB09 |
-| `er-cands_vN` | NB05 | `cands_{A,B,test}.parquet` (s1_id, cand_id, channel bitmask, channel ranks, cheap score), `blocking_report.json` | NB06–NB09 |
+| NB02 output (`er-nb02-normalize` vN) | NB02 | `records_{train,test}_S{1,2,3}.parquet` (raw + norm/fold/number/landmark fields), `stats_{train,test}.parquet` (long token table), `gt.parquet` (s1_id, match_id), `split_s1.parquet`, `split_pool.parquet`, `metrics.json` | NB03–NB09 via `kernel_sources` |
+| NB03 output (`er-nb03-embed` vN) | NB03 | `emb_{train,test}_{S1,pool}.npy` (fp16, 256-d; pool = S2 rows then S3 rows), `knn_{split}_{idx,score}.npy` (S1→pool top-30), `rev_{split}_{idx,score}.npy` (pool→S1 top-5), `metrics.json` | NB04, NB05 |
+| NB04 output (`er-nb04-finetune` vN) | NB04 | `ft_model/` (merged fp16), `lora_final/`, `train_log.json`, `acceptance.json` (G2) | NB04b; NB04b output (`er-nb04b-ft-encode`): `ft_emb_*`, `ft_knn_*`, `ft_rev_*` (train rows = Half B only) → NB05 v2 |
+| NB05 output (`er-nb05-blocking` vN) | NB05 | `cands_{A,B,test}.parquet` (s1_id, cand_id, bitmask, channel scores/ranks, dense_cos, cheap_score), `pruner.txt`, `blocking_report.json`, `missed_B.tsv` | NB06–NB09 |
 | `er-feats_vN` | NB06 | `feats_{A,B,test}.parquet` | NB07, NB09 |
 | `er-stage1_vN` | NB06 | `stage1_model.txt`, `p1_A_oof.parquet`, `p1_{B,test}.parquet` | NB07, NB08, NB09 |
 | `er-judge_vN` | NB07 | LoRA adapter, `train_log.json`, `prompts_sample.jsonl` | NB08 |
@@ -158,10 +161,10 @@ Rules:
 |---|---|---|---|---|---|---|---|
 | 00 | `nb00_download_models` | None (CPU) | **ON** | — | `er-models` | 20–40 min | GPU track |
 | 01 | `nb01_eda` | CPU | OFF | er-data, er-code | findings → `memory.md` | 60–90 min | CPU track |
-| 02 | `nb02_normalize_stats_split` | CPU | OFF | er-data, er-code | `er-norm_v1` | 10–30 min | CPU track |
-| 03 | `nb03_embed_frozen` | GPU T4×2 | OFF | er-norm, er-models, er-code | `er-emb_v1` | 30–60 min | GPU track |
-| 04 | `nb04_finetune_embedder` | GPU T4 (P100 ok) | OFF | er-norm, er-emb, er-models, er-code | `er-embedder_v1` | 1–1.5 h | GPU track |
-| 05 | `nb05_blocking` | CPU (GPU optional for FAISS) | OFF | er-norm, er-emb, er-embedder, er-code | `er-cands_v1` | 20–60 min | CPU track |
+| 02 | `nb02_normalize` → `er-nb02-normalize` | CPU | OFF | er-data | NB02 output | ~1 h | CPU track |
+| 03 | `nb03_embed` (+ `nb03_embed_dry`) → `er-nb03-embed` | GPU T4×2 (`NvidiaTeslaT4`) | OFF | NB02 + NB00 outputs (kernel_sources) | NB03 output | measured in dry run | GPU track |
+| 04 | `nb04_finetune` (+ `_dry`), `nb04b_ft_encode` | GPU T4 | OFF | NB02 + NB03 + NB00 outputs | NB04 / NB04b outputs | ~1.5 h + encode | GPU track |
+| 05 | `nb05_blocking` → `er-nb05-blocking` | CPU | OFF | NB02 + NB03 (v2: + NB04b) outputs | NB05 output | 1–2 h (est.) | CPU track |
 | 06 | `nb06_features_stage1` | CPU | OFF | er-norm, er-cands, er-emb, er-code | `er-feats_v1`, `er-stage1_v1` | 30–90 min | CPU track |
 | 07 | `nb07_judge_train` | GPU T4 (single) | OFF | er-norm, er-feats, er-stage1, er-models, er-code | `er-judge_v1` | ≤ 3 h | GPU runner R2 |
 | 08 | `nb08_judge_infer` | GPU T4×2 | OFF | er-judge, er-models, er-norm, er-stage1, er-cands, er-code | `er-judge-scores_v1` | 30–90 min | GPU runner R2 |
@@ -211,12 +214,12 @@ Cells:
 3. `split.make_ab_split` (stratified by country × match bucket; seed 42).
 4. Save `er-norm_v1` + manifest.
 
-### 6.5 NB03: frozen embeddings (T4×2)
+### 6.5 NB03: frozen embeddings + GPU dense kNN (T4×2)
 
-1. Load `SentenceTransformer("/kaggle/input/er-models/qwen3-emb-0.6b", device="cuda")`, fp16.
-2. Encode full / name / address texts for train and test (split the list across 2 GPUs via `encode_multi_process` or two processes).
-3. L2-normalise, save `.npy` in float16 + ID order.
-4. Sanity check: cosine of 5 known positive pairs vs 5 random pairs.
+1. Load Qwen3-Embedding-0.6B with transformers (fp16, sdpa, left padding, last-token pooling), one replica per GPU; text = `"name | address"` (raw, NFKC + whitespace; country omitted because blocking is within-country).
+2. Encode train S1, train pool (S2+S3), test S1, test pool with length-sorted batches; MRL-truncate to 256-d, L2-normalise, save fp16 `.npy` (scale guard: full-record only; name/address-only vectors skipped — ~3× GPU time and > 20 GB output).
+3. Exact within-country kNN on the GPU (chunked matmul + top-k): S1→pool top-30 and pool→S1 top-5 from the same score blocks. CPU kNN at 1.7M × 10M is not feasible.
+4. metrics.json: throughput, sanity cosines (true vs random same-country pairs), dense recall@k on Half B per country. The dry run (`er-nb03-embed-dry`) also compares with vs without the instruction prefix on a 3k-query mini retrieval task.
 
 ### 6.6 NB04: fine-tune embedder (Half A only)
 
@@ -227,11 +230,11 @@ Cells:
 
 ### 6.7 NB05: blocking
 
-1. Channels: dense (A uses frozen; B/test use fine-tuned if G2 passes), reverse dense, TF-IDF name/address (`char_wb`, 3–4-grams), postcode + shared core token, rare-token key.
-2. Within-country restriction via label equality **only if** E5 says matches never cross countries.
-3. Union → cheap score → top-50 per S1.
-4. Blocking report on A and B (per country, per channel, scrambled) → **Gate G1**.
-5. Save `er-cands_v1` (the test candidates here become `candidate_pairs.tsv` after the final pipeline; they must be exactly what the combiner scores).
+1. Channels (all within-country by label equality, EDA E5): dense + reverse dense (NB03 lists; A always frozen, B/test fine-tuned in v2 if G2 passes), char 3–4-gram TF-IDF on name (k 20) and address (k 15), rare-token key on norm + fold name tokens (k 20), house-number + street-token key (k 20; replaces the postcode key: postcodes in ~1–2% of records). Sparse channels drop index features with df above a cap to keep the sparse product tractable.
+2. Queries: 250k S1 per half (seeded sample) against the full train pool; all test S1.
+3. Union → cheap features (channel scores/ranks, dense cosine, gaps to the S1's best) → LightGBM pre-ranker trained on Half A → top-50 per S1.
+4. Blocking report on A and B (per country, per channel unique contribution; union vs pruned recall) → **Gate G1**; `missed_B.tsv` (≤ 200 missed true B pairs) for error bucketing. Scrambled recall for the dense channel comes from NB04's acceptance test (sparse char channels are permutation-invariant by construction).
+5. Current version: see progress.md (v1 = frozen dense).
 
 ### 6.8 NB06: features + stage-1
 

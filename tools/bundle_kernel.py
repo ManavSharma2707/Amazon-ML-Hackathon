@@ -40,7 +40,7 @@ def _strip_relative_imports(source: str) -> str:
     return _RELATIVE_IMPORT_RE.sub("", source)
 
 
-def bundle(module_names: list[str], driver_source: str) -> str:
+def bundle(module_names: list[str], driver_source: str, config_text: str | None = None) -> str:
     """Build one self-contained script from src/ modules plus a driver's code.
 
     Each module is embedded as its exact source text (via `repr()`, so no
@@ -55,7 +55,9 @@ def bundle(module_names: list[str], driver_source: str) -> str:
             that others depend on must come first), e.g. ["io_utils", "eda"];
             driver_source - the notebook's own driving code, referencing the
             bundled modules by bare name (e.g. `eda.run_eda(...)`); must not
-            `sys.path.insert(...)` or `from src import ...`.
+            `sys.path.insert(...)` or `from src import ...`;
+            config_text - optional YAML text (src/configs/default.yaml), exposed
+            to the driver as the parsed dict `CONFIG`.
     Outputs: the full generated script text, ready to write to a kernel's code_file.
     """
     lines = [
@@ -67,6 +69,7 @@ def bundle(module_names: list[str], driver_source: str) -> str:
         "then re-run: python tools/bundle_kernel.py --spec <this folder>/bundle_spec.json",
         '"""',
         "",
+        "import sys",
         "import types",
         "",
     ]
@@ -75,6 +78,9 @@ def bundle(module_names: list[str], driver_source: str) -> str:
         source = _strip_relative_imports(source)
         lines.append(f"_{name}_source = {source!r}")
         lines.append(f'{name} = types.ModuleType({name!r})')
+        # Registered in sys.modules so pickle (multiprocessing) can resolve
+        # functions defined in the bundled module by "<module>.<name>".
+        lines.append(f"sys.modules[{name!r}] = {name}")
     # Wire cross-module references (e.g. eda needs io_utils) before exec: a
     # module's function bodies look up free names in its __dict__ only when
     # *called*, not when defined, so injecting first is simplest and safe.
@@ -84,6 +90,9 @@ def bundle(module_names: list[str], driver_source: str) -> str:
                 lines.append(f"{name}.__dict__[{dep!r}] = {dep}")
     for name in module_names:
         lines.append(f'exec(compile(_{name}_source, {name + ".py"!r}, "exec"), {name}.__dict__)')
+    if config_text is not None:
+        lines.append("import yaml")
+        lines.append(f"CONFIG = yaml.safe_load({config_text!r})")
     lines.append("")
     lines.append("# ---- notebook driver (see driver.py in this kernel's folder) ----")
     lines.append(driver_source)
@@ -95,14 +104,18 @@ def bundle_from_spec(spec_path: Path) -> Path:
 
     Inputs: spec_path - path to a `bundle_spec.json` with keys "modules"
             (list of src/ module stems, dependency order), "driver" (filename
-            in the same folder), and "output" (filename in the same folder;
-            must match kernel-metadata.json's `code_file`).
+            in the same folder), "output" (filename in the same folder;
+            must match kernel-metadata.json's `code_file`), and optionally
+            "config": true to inline src/configs/default.yaml as `CONFIG`.
     Outputs: path to the written generated script.
     """
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     kernel_dir = spec_path.parent
     driver_source = (kernel_dir / spec["driver"]).read_text(encoding="utf-8")
-    script = bundle(spec["modules"], driver_source)
+    config_text = None
+    if spec.get("config"):
+        config_text = (SRC_DIR / "configs" / "default.yaml").read_text(encoding="utf-8")
+    script = bundle(spec["modules"], driver_source, config_text)
     out_path = kernel_dir / spec["output"]
     out_path.write_text(script, encoding="utf-8")
     return out_path

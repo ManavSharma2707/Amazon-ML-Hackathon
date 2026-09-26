@@ -1,0 +1,6 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "split"],
+  "driver": "driver.py",
+  "output": "nb02_normalize.py",
+  "config": true
+}

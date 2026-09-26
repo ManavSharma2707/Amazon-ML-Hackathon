@@ -24,6 +24,14 @@ def test_char_channel_finds_typo_and_ranks():
         assert (np.diff(s) <= 1e-6).all()
 
 
+def test_empty_rows_anywhere_do_not_crash():
+    """Empty texts (e.g. empty addresses) at the start, middle and end of either side are fine."""
+    q = ["", "main street 12", ""]
+    p = ["", "main st 12", "oak road", ""]
+    qi, pi, sc, _ = blocking.run_sparse_channel(q, p, "char", k=2, max_df=10)
+    assert set(qi.tolist()) == {1} and pi[0] == 1 and np.isfinite(sc).all()
+
+
 def test_max_df_prunes_frequent_features():
     """A token present in every pool record is dropped from the index (no match through it)."""
     q = ["common"]

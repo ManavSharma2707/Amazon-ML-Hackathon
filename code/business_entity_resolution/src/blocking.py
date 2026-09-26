@@ -135,11 +135,13 @@ def hashed_counts(texts: list[str], kind: str, n_jobs: int = 1, chunk: int = 200
 
 def _l2_rows(m: sp.csr_matrix) -> None:
     """L2-normalise csr rows in place (empty rows stay empty)."""
-    sq = np.add.reduceat(m.data.astype(np.float64) ** 2, m.indptr[:-1]) if m.nnz else np.zeros(m.shape[0])
-    nnz_rows = np.diff(m.indptr) > 0
-    norms = np.ones(m.shape[0])
-    norms[nnz_rows] = np.sqrt(sq[nnz_rows])
-    m.data /= np.repeat(norms, np.diff(m.indptr)).astype(np.float32)
+    # bincount over row ids, not np.add.reduceat: reduceat fails when trailing
+    # rows are empty (NB05 sparse v1 crashed on empty addresses at the end).
+    counts = np.diff(m.indptr)
+    rows = np.repeat(np.arange(m.shape[0]), counts)
+    sq = np.bincount(rows, weights=m.data.astype(np.float64) ** 2, minlength=m.shape[0])
+    norms = np.where(sq > 0, np.sqrt(sq), 1.0)
+    m.data /= norms[rows].astype(np.float32)
 
 
 def tfidf_pair(q_counts: sp.csr_matrix, p_counts: sp.csr_matrix, max_df: int) -> tuple[sp.csr_matrix, sp.csr_matrix]:

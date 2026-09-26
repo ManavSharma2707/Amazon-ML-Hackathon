@@ -5,6 +5,18 @@
 
 ---
 
+## Autonomous run state (PROMPT FINAL)
+
+- **Updated:** 2026-09-27 04:10 IST
+- **Stage:** S0 -> S1 (no submission yet: sub-01 pending NB06 -> NB09a)
+- **Iteration #:** 0
+- **Current best config:** none yet (sub-01 = stage-1 + isotonic + decoder/threshold, NB09a)
+- **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / —
+- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:15 IST); er-nb05-blocking-sparse v5 (R1, since ~02:55 IST)
+- **Done:** er-nb07-judge-train-dry v1 (R2) COMPLETE 03:35 IST (dry run clean; 3.2 s/step at 4 ex/step)
+- **Next action:** NB06 done -> push NB09a + NB06b (R1); fetch TSVs -> checks -> tag sub-01 -> UPLOAD READY; relay judge inputs -> NB07 full (R2); meanwhile write collective.py / combiner.py / NB09
+- **Uploads used today (27 Sep):** 0 (assumed — not reported by the user)
+
 ## Current focus
 
 **Prompt 3 in progress (03:35 IST).** Code done + unit-tested + local sample smoke runs: `explain_diff`, `features`, `stage1`, `decoder`, `exclusivity`, streaming `check_outputs`, `judge_data`, `judge_train`; kernels NB06 (`er-nb06-features-stage1`), NB09a (`er-nb09a-decode-submit`), NB06b (`er-nb06b-judge-data`), NB07 (+dry). **Running:** NB06 v1 on R1 (pushed ~03:15 IST, on NB05 v4 or v5 output — whichever Kaggle mounted), NB07 dry on R2 (sample-built `er-judge-inputs` v1). **Next:** NB06 done -> push NB09a + NB06b on R1 -> fetch TSVs -> check_outputs + validator -> commit + tag sub-01; relay real judge inputs -> NB07 full on R2. Local disk was full (freed 2.2 GB of stale upload zips; ~2 GB free).

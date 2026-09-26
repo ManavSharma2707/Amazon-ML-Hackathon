@@ -41,10 +41,11 @@ def answer_ids(tok) -> tuple[int, int]:
     return y[0], n[0]
 
 
-def load_model(model_dir: str | Path, r: int = 16, alpha: int = 32, dropout: float = 0.05, train: bool = True):
+def load_model(model_dir: str | Path, r: int = 16, alpha: int = 32, dropout: float = 0.05, train: bool = True,
+               device: int = 0):
     """4-bit Qwen3 + LoRA (train) or plain 4-bit model (for adapter loading at inference).
 
-    Outputs: (tokenizer, model) on cuda:0.
+    Outputs: (tokenizer, model) on cuda:<device>.
     """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -56,7 +57,7 @@ def load_model(model_dir: str | Path, r: int = 16, alpha: int = 32, dropout: flo
         tok.pad_token = tok.eos_token
     bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
                              bnb_4bit_compute_dtype=torch.float16)
-    kw = dict(quantization_config=bnb, attn_implementation="sdpa", device_map={"": 0})
+    kw = dict(quantization_config=bnb, attn_implementation="sdpa", device_map={"": device})
     try:  # transformers >= 5 renamed torch_dtype -> dtype
         model = AutoModelForCausalLM.from_pretrained(str(model_dir), dtype=torch.float16, **kw)
     except TypeError:
@@ -102,7 +103,7 @@ def yes_no_logits(model, inp, att, yes: int, no: int):
     return last[:, [yes, no]].float()
 
 
-def predict(model, tok, ids: list[list[int]], batch: int = 16) -> np.ndarray:
+def predict(model, tok, ids: list[list[int]], batch: int = 16, device: str = "cuda:0") -> np.ndarray:
     """p(Yes) for tokenised prompts (eval mode, no grad), length-sorted batches."""
     import torch
 
@@ -113,7 +114,7 @@ def predict(model, tok, ids: list[list[int]], batch: int = 16) -> np.ndarray:
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
         for s in range(0, len(ids), batch):
             idx = order[s : s + batch]
-            inp, att = _batch([ids[i] for i in idx], tok.pad_token_id, "cuda")
+            inp, att = _batch([ids[i] for i in idx], tok.pad_token_id, device)
             lg = yes_no_logits(model, inp, att, yes, no)
             out[idx] = torch.softmax(lg, dim=-1)[:, 0].cpu().numpy()
     return out

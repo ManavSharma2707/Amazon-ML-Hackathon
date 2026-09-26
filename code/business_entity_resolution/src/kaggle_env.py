@@ -93,6 +93,20 @@ def ensure_rapidfuzz() -> None:
     importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018
 
 
+def ensure_packages(modules: list[str]) -> None:
+    """Offline-install the given packages from NB00's wheels when the image lacks them (internet OFF)."""
+    import importlib.util
+    import subprocess
+    import sys
+
+    need = [m for m in modules if importlib.util.find_spec(m) is None]
+    if need:
+        wheels = find_input("wheels")
+        log(f"installing {need} from {wheels}")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-index", "--find-links", str(wheels), *need],
+                       check=True)
+
+
 def main() -> None:
     """Print where the dataset would be found (smoke test)."""
     try:

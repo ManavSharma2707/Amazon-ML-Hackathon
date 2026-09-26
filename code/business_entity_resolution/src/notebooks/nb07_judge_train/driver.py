@@ -13,8 +13,6 @@ vs stage-1 on the same pairs). Internet OFF.
 """
 
 import os
-import subprocess
-import sys
 import time
 
 import numpy as np
@@ -26,18 +24,6 @@ SEED = CONFIG["seed"]
 DRY = globals().get("DRY", False)
 BUDGET_MIN = float(os.environ.get("ER_JUDGE_BUDGET_MIN", 4 if DRY else JC.get("train_budget_min", 150)))
 HOLDOUT = 0.05
-
-
-def install_wheels() -> None:
-    """Offline install of the QLoRA stack from NB00's wheels (only what the image lacks)."""
-    import importlib.util
-
-    need = [m for m in ("bitsandbytes", "peft", "accelerate") if importlib.util.find_spec(m) is None]
-    if need:
-        wheels = kaggle_env.find_input("wheels")
-        kaggle_env.log(f"installing {need} from {wheels}")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-index", "--find-links", str(wheels), *need],
-                       check=True)
 
 
 def auc_ll(y, p) -> dict:
@@ -54,7 +40,7 @@ def main() -> None:
     """Run NB07 (or its dry run) end to end."""
     t0 = time.time()
     WORK.mkdir(parents=True, exist_ok=True)
-    install_wheels()
+    kaggle_env.ensure_packages(["bitsandbytes", "peft", "accelerate"])
     import torch
 
     kaggle_env.log(f"torch {torch.__version__}, cuda {torch.cuda.is_available()}, gpus {torch.cuda.device_count()}, dry {DRY}")

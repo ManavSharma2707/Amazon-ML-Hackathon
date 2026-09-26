@@ -7,12 +7,12 @@
 
 ## Autonomous run state (PROMPT FINAL)
 
-- **Updated:** 2026-09-27 04:10 IST
+- **Updated:** 2026-09-27 04:40 IST
 - **Stage:** S0 -> S1 (no submission yet: sub-01 pending NB06 -> NB09a)
 - **Iteration #:** 0
 - **Current best config:** none yet (sub-01 = stage-1 + isotonic + decoder/threshold, NB09a)
 - **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / —
-- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:15 IST); er-nb05-blocking-sparse v5 (R1, since ~02:55 IST)
+- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:15 IST, on NB05 v4 or v5); er-nb05-blocking-sparse v6 (R1, pushed 04:40 IST, ~2 h)
 - **Done:** er-nb07-judge-train-dry v1 (R2) COMPLETE 03:35 IST (dry run clean; 3.2 s/step at 4 ex/step)
 - **Next action:** NB06 done -> push NB09a + NB06b (R1); fetch TSVs -> checks -> tag sub-01 -> UPLOAD READY; relay judge inputs -> NB07 full (R2); meanwhile write collective.py / combiner.py / NB09
 - **Uploads used today (27 Sep):** 0 (assumed — not reported by the user)
@@ -142,6 +142,7 @@
 | B2 | 2026-09-27 01:10 | + name_pair / addr_pair token-pair channels (k 20, df cap 500), `er-nb05-blocking-sparse` v3 | B pair recall **0.952** (union 0.953), entity-complete 0.867, 48.0 cands/S1 | — | — | yes | addr_pair unique 79.9k, name_pair 42.8k true B pairs; test side OOM-killed on the 48M-pair India union → v4 chunks it |
 | B3 | 2026-09-27 02:45 | chunked test union; pair k 30 / df cap 2000, `er-nb05-blocking-sparse` v4 (67 min) | B pair recall **0.9585** (US 0.970 / India 0.942), union 0.964, entity-complete 0.881, RR 0.999995, 49.8 cands/S1 (p95 50) | — | — | superseded by v5 | test: France 49.9 / India 49.9 / US 49.8 cands/S1, 0% S1 without candidates. Missed-B buckets: 65 both-fields-shared (generic/leetspeak), 53 name broken, 49 empty address, 26 pruned out |
 | B4 | 2026-09-27 03:20 | + cross name x address pairs, look-alike digit folding, `er-nb05-blocking-sparse` v5 (96 min, commit `2801f74`) | B pair recall **0.9733** (US 0.982 / India 0.959), union 0.978, entity-complete 0.916, RR 0.999995, 50.0 cands/S1 | — | — | **current** | cross_pair unique 11.6k; test 50 cands/S1 in all 3 countries, 0% without candidates |
+| B5 | 2026-09-27 04:40 | + reverse name channel (pool -> top-3 S1 by name char TF-IDF vs all S1 of the country), `er-nb05-blocking-sparse` v6 (commit `663c273`) | running | — | — | ? | v5 missed pairs are mostly easy look-alike names losing the forward top-k race |
 | — | 2026-09-26 21:37 | all-empty floor (train, full dataset) | 0.0558 | — | — | baseline | Singleton rate; nearly identical US (0.05583) vs India (0.05588) |
 
 ---

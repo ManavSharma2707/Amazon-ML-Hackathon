@@ -90,6 +90,15 @@
 | 2026-09-26 19:50 IST | **GPU notebooks (NB03+) always get a fast/dry-run push before the full run** | GPU quota is scarce (~30 h/week); a crash found only after a multi-hour run is expensive, a dry run costs minutes. User instruction, recorded in CLAUDE.md SS5 |
 | 2026-09-26 21:00 IST | **Every Kaggle kernel that can run >1-2 min gets per-stage, flushed progress logging** (start/end of each stage, chunked progress inside big loops) | NB01 ran 45+ minutes with zero visible output, making a stuck run indistinguishable from a slow-but-fine one. User instruction, recorded in CLAUDE.md SS5 (Logging) |
 | 2026-09-26 21:51 IST | **Every kernel's output gets fetched into `reports/raw/<name>/` the moment it finishes, before doing anything else with it** | Read eda.json into a summary and deleted the temp download without saving the raw artifact to the repo first — user caught this. `reports/raw/` is git-ignored by design, so this costs nothing. Recorded in CLAUDE.md SS6 |
+| 2026-09-27 03:10 IST | **Explain-the-difference alignment = greedy by relation strength** (exact first, then split_join/initialism spans, then greedy 1-1), not Hungarian; 2-letter abbreviations are the weak `short_abbrev` relation; numbers never match as typos | Tokens per field are few, greedy gives the same links and is ~10x faster in pure Python; "st"~"south" must stay weak |
+| 2026-09-27 03:10 IST | **Group-A string features: Levenshtein replaces Damerau-Levenshtein; WRatio/partial/token_sort only on names** | Timed per pair: DL 8-27 us, WRatio on addresses 22 us vs ratio/JW/Lev ~1 us; features stay word-free |
+| 2026-09-27 03:10 IST | **Stage-1 has no embedding features (group D) and `same_country` is dropped (constant)** | No full-data vectors (NB03/NB04 infeasible); blocking is within-country |
+| 2026-09-27 03:10 IST | **NB06 scale guard: if projected full-feature time > 90 min, a cheap pre-ranker (meta + 8 fast rapidfuzz scores, LightGBM on Half A) keeps top-20 per S1; that set is the scored set = candidate_pairs.tsv** | ~250 us/pair Python features x ~111M pairs at top-50 = hours |
+| 2026-09-27 03:10 IST | **Stage-1 trains on 150k Half-A S1s (a_s1_cap), B uses all 250k NB05 B queries** | LightGBM time on 4 CPU cores |
+| 2026-09-27 03:40 IST | **Judge prompt omits the country field** (deviation from plan SS16.3) | All pairs are same-country; rule 5 allows only the equality flag |
+| 2026-09-27 04:05 IST | **Combiner uses within-entity + sibling collective features but NOT cross-entity competition counts/margins** (plan SS17.1) | Half B queries only ~11-18% of train S1s while test has all S1s competing: claimant counts would shift train->test and LOCO cannot see it; cross-entity conflicts go to the one-owner rule |
+| 2026-09-27 04:05 IST | **Combiner re-scores only pairs with stage-1 p >= 0.001 (p_floor); others keep p1, identically on test** | LightGBM time on ~5M B rows; true pairs below the floor are reported in NB09 metrics |
+| 2026-09-27 04:10 IST | **Judge inference (NB08) scores B and test in one queue, most uncertain first, and cuts both at the same depth abs(p1 - 0.5)** | `judge_scored` must mean the same thing in the combiner's training data (B) and on test |
 
 ## 6. EDA findings (fill in during Step 1)
 
@@ -153,6 +162,11 @@ Run 2026-09-26 ~21:37 IST on Kaggle CPU kernel `nb01-eda` (R1), full train+test 
 - `kaggle kernels output --file-pattern '<regex>'` downloads only matching files — use it to fetch `metrics.json`/logs without pulling multi-GB parquet/npy outputs.
 - On this Windows machine, bare `python`/`python3` on PATH resolve to the Microsoft Store alias and fail with "Python was not found". Use the real interpreter path recorded in `CLAUDE.local.md`.
 - **Kaggle dataset mount path is not always `/kaggle/input/<slug>/`.** Observed on this environment (2026-09-26): datasets mount at `/kaggle/input/datasets/<owner>/<slug>/` instead. Never hard-code either convention or an owner username in a notebook — resolve the path dynamically (glob both patterns). This is also why notebooks must never depend on a code dataset being mounted at all (see the SS5 decision below and architecture.md SS6.1) — `sys.path.insert(0, "/kaggle/input/er-code")` broke for the same reason.
+- **Local C: drive filled up completely (5.6 MB free of 191 GB) on 2026-09-27 03:25 IST.** Two stale 1.1 GB `dataset.zip` temp files from the 26 Sep er-data upload were in `%TEMP%` (deleted). Check `df -h /c` before fetching output TSVs (candidate_pairs.tsv ~0.5 GB); pagefile.sys was 11.5 GB from RAM pressure.
+- **Bundled kernels run module code before the driver installs offline wheels**: never bind an optional import (rapidfuzz) at module import time — resolve it lazily (explain_diff._distances) or the slow fallback is used silently. Also: the bundler strips only top-level `from . import X`; an indented one breaks the bundle.
+- **86M-row candidate tables as pandas object strings need ~11 GB**: read Parquet with Arrow-backed strings (`io_utils.read_parquet_compact`) and stream test candidates in whole-S1 batches.
+- **Original check_outputs loaded all test S2/S3 IDs + per-S1 Python sets (GBs)**: rewritten to stream with int64-encoded IDs (fine on the 8 GB laptop).
+- **Qwen3-4B QLoRA on one T4 (dry run): 3.2 s per 4-example step; prompts ~291 tokens (4.7% hit 384); "Yes"/"No" are single tokens** (reports/raw/nb07_dry_v1).
 
 ## 10. Open questions
 

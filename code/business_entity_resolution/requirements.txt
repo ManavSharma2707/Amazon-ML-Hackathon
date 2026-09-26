@@ -1,0 +1,17 @@
+# Pinned at packaging time from the Kaggle run (CLAUDE.md SS5). Draft versions below;
+# re-pin exact versions once NB00/NB03 print `pip freeze` on Kaggle.
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.5.0
+lightgbm==4.3.0
+rapidfuzz==3.9.4
+faiss-cpu==1.8.0
+sentence-transformers==3.0.1
+transformers==4.51.0
+peft==0.11.1
+accelerate==0.31.0
+bitsandbytes==0.43.1
+anyascii==0.3.2
+PyYAML==6.0.1
+pytest==8.2.2

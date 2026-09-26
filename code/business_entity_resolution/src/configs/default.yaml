@@ -1,0 +1,81 @@
+# default.yaml — all hyperparameters, paths and flags for the pipeline.
+# `env` selects which `paths.*` block is active; notebooks override it via
+# the standard first cell (architecture.md SS6.1) or a CLI --env flag.
+
+seed: 42
+env: local  # local | kaggle
+
+paths:
+  local:
+    data_dir: student_resource/dataset
+    models_dir: models
+    work_dir: output
+  kaggle:
+    data_dir: /kaggle/input/er-data/student_resource/dataset
+    models_dir: /kaggle/input/er-models
+    work_dir: /kaggle/working
+
+stats_mode: per_run  # per_run | train_only (fallback, master plan SS9.4 / memory.md Q3)
+
+split:
+  a_frac: 0.55
+  stratify: [country, match_bucket]
+
+embed:
+  model: qwen3-emb-0.6b
+  max_len: 96
+  batch: 256
+  instruction: "Instruct: Represent this business record to find records of the same business\nQuery: "
+
+finetune:
+  lr: 2.0e-5
+  epochs: 1
+  batch: 64
+  hard_negs: 3
+  scramble_frac: 0.2
+  field_dropout: 0.1
+
+blocking:
+  dense_k: 30
+  reverse_k: 5
+  tfidf_name_k: 20
+  tfidf_addr_k: 15
+  rare_token_cap: 20
+  prune_top: 50
+  within_country: auto  # decided by EDA E5
+
+scale_guard:  # turned on if EDA shows millions of records (memory.md Q8)
+  enabled: auto
+  mrl_dim: 256
+  faiss_index: ivf  # flat | ivf ; ivf nlist ~= 4*sqrt(N)
+  prerank_top: 20
+
+stage1:
+  num_leaves: 63
+  lr: 0.05
+  min_data_in_leaf: 50
+  folds: 5
+  monotone: auto
+
+judge:
+  model: qwen3-4b
+  lora_r: 16
+  lora_alpha: 32
+  max_len: 384
+  lr: 1.0e-4
+  train_band: [0.05, 0.95]
+  infer_band: [0.10, 0.90]
+  time_budget_min: 45
+  order_swap_tta: true
+
+combiner:
+  num_leaves: 31
+  folds: 5
+  calibration: isotonic
+
+exclusivity: auto  # none | soft | hard, chosen on B
+
+decoder:
+  lambda_grid: [0.7, 0.85, 1.0, 1.15]
+  max_n: 20
+  min_p: 0.01

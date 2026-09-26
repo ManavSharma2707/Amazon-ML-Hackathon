@@ -180,6 +180,7 @@ Leaderboard scores are ~0.99, so the last 1% is where the competition is decided
   - A private notebook's output can't be attached by the other runner. To move an artifact between runners: `kaggle kernels output` → local folder → `kaggle datasets create/version` under the other runner.
   - Before relying on a CLI flag (e.g., accelerator choice for T4×2), check `kaggle kernels push --help`; don't guess.
   - Poll long jobs with `sleep 300` between status checks (never tight loops); read only the small `metrics.json` / `report.json` that each notebook writes, not full logs.
+  - **The moment a kernel reaches COMPLETE (or ERROR), fetch its output into `reports/raw/<notebook-name>/` before doing anything else with it** (`kaggle kernels output <slug> -p reports/raw/<name>`, `--file-pattern` to skip large artifacts like model weights). Reading a result into a summary and then deleting the temp download is not enough — the raw artifact (JSON report, log, manifest) must land in `reports/raw/` so it survives the session and can be re-checked later. `reports/raw/` is git-ignored by design (CLAUDE.md §8.1) so this never bloats the repo.
 - When a step cannot be automated (e.g., a CLI limitation), generate the notebook and tell the user exactly which accelerator, inputs and output dataset name to use.
 
 ### 6.1 Privacy of compute details (strict)

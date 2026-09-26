@@ -40,7 +40,9 @@ def _strip_relative_imports(source: str) -> str:
     return _RELATIVE_IMPORT_RE.sub("", source)
 
 
-def bundle(module_names: list[str], driver_source: str, config_text: str | None = None) -> str:
+def bundle(
+    module_names: list[str], driver_source: str, config_text: str | None = None, defines: dict | None = None
+) -> str:
     """Build one self-contained script from src/ modules plus a driver's code.
 
     Each module is embedded as its exact source text (via `repr()`, so no
@@ -57,7 +59,9 @@ def bundle(module_names: list[str], driver_source: str, config_text: str | None 
             bundled modules by bare name (e.g. `eda.run_eda(...)`); must not
             `sys.path.insert(...)` or `from src import ...`;
             config_text - optional YAML text (src/configs/default.yaml), exposed
-            to the driver as the parsed dict `CONFIG`.
+            to the driver as the parsed dict `CONFIG`; defines - optional
+            {NAME: value} globals set before the driver (e.g. {"DRY_RUN": true}
+            so a dry-run kernel can share the full kernel's driver.py).
     Outputs: the full generated script text, ready to write to a kernel's code_file.
     """
     lines = [
@@ -93,6 +97,8 @@ def bundle(module_names: list[str], driver_source: str, config_text: str | None 
     if config_text is not None:
         lines.append("import yaml")
         lines.append(f"CONFIG = yaml.safe_load({config_text!r})")
+    for key, value in (defines or {}).items():
+        lines.append(f"{key} = {value!r}")
     lines.append("")
     lines.append("# ---- notebook driver (see driver.py in this kernel's folder) ----")
     lines.append(driver_source)
@@ -106,7 +112,9 @@ def bundle_from_spec(spec_path: Path) -> Path:
             (list of src/ module stems, dependency order), "driver" (filename
             in the same folder), "output" (filename in the same folder;
             must match kernel-metadata.json's `code_file`), and optionally
-            "config": true to inline src/configs/default.yaml as `CONFIG`.
+            "config": true to inline src/configs/default.yaml as `CONFIG`, and
+            "defines": {NAME: value} globals for the driver. "driver" may be a
+            relative path into a sibling folder (dry-run kernels share it).
     Outputs: path to the written generated script.
     """
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -115,7 +123,7 @@ def bundle_from_spec(spec_path: Path) -> Path:
     config_text = None
     if spec.get("config"):
         config_text = (SRC_DIR / "configs" / "default.yaml").read_text(encoding="utf-8")
-    script = bundle(spec["modules"], driver_source, config_text)
+    script = bundle(spec["modules"], driver_source, config_text, spec.get("defines"))
     out_path = kernel_dir / spec["output"]
     out_path.write_text(script, encoding="utf-8")
     return out_path

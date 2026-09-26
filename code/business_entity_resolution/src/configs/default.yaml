@@ -23,8 +23,8 @@ split:
 
 embed:
   model: qwen3-emb-0.6b
-  max_len: 96
-  batch: 256
+  max_len: 64  # records are short; length-sorted batches pad only to the batch max
+  batch: 512
   instruction: "Instruct: Represent this business record to find records of the same business\nQuery: "
 
 finetune:

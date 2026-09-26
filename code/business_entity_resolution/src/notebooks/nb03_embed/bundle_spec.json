@@ -1,0 +1,6 @@
+{
+  "modules": ["kaggle_env", "io_utils", "embed"],
+  "driver": "driver.py",
+  "output": "nb03_embed.py",
+  "config": true
+}

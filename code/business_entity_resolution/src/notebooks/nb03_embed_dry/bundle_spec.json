@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "embed"],
+  "driver": "../nb03_embed/driver.py",
+  "output": "nb03_embed_dry.py",
+  "config": true,
+  "defines": {"DRY_RUN": true}
+}

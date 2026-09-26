@@ -32,7 +32,7 @@ NO_DENSE = globals().get("NO_DENSE", False)
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
 BC = CONFIG["blocking"]
-COLS = ["entity_id", "country", "norm_name", "fold_name", "norm_addr", "house_number"]
+COLS = ["entity_id", "country", "norm_name", "fold_name", "norm_addr", "fold_addr", "house_number"]
 
 
 def load_split(recs_dir, split: str):
@@ -70,7 +70,7 @@ def dense_parts(emb_dir, prefix: str, split: str, q_rows: np.ndarray, n_s1: int)
 
 def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> dict:
     """Run the four sparse channels per country group; return global-row lists."""
-    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key")}
+    parts = {c: [] for c in ("name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair")}
     s1_cty, p_cty = s1["country"].to_numpy(), pool["country"].to_numpy()
     for c in sorted(set(s1_cty[q_rows].tolist())):
         qi = q_rows[s1_cty[q_rows] == c]
@@ -83,6 +83,8 @@ def sparse_parts(s1: pd.DataFrame, pool: pd.DataFrame, q_rows: np.ndarray) -> di
             "addr_char": (lambda d: d["norm_addr"].tolist(), "char", BC["tfidf_addr_k"], BC["addr_char_max_df"]),
             "name_tok": (lambda d: blocking.name_tok_text(d["norm_name"], d["fold_name"]), "word", BC["rare_token_cap"], BC["name_tok_max_df"]),
             "num_key": (lambda d: blocking.num_key_text(d["norm_addr"], d["house_number"]), "word", BC["num_key_k"], BC["num_key_max_df"]),
+            "name_pair": (lambda d: d["fold_name"].tolist(), "name_pair", BC["pair_k"], BC["pair_max_df"]),
+            "addr_pair": (lambda d: d["fold_addr"].tolist(), "addr_pair", BC["pair_k"], BC["pair_max_df"]),
         }
         for ch, (text_fn, kind, k, max_df) in specs.items():
             t0 = time.time()
@@ -141,7 +143,7 @@ def true_keys_for(s1, pool, pairs, q_rows):
 def to_cands(pr: pd.DataFrame, s1, pool) -> pd.DataFrame:
     """Pruned union rows -> saved candidate table with entity IDs."""
     keep = ["bitmask", "n_channels", "dense_rank", "reverse_rank", "name_char_score", "addr_char_score",
-            "name_tok_score", "num_key_score", "dense_cos", "cheap_score"]
+            "name_tok_score", "num_key_score", "name_pair_score", "addr_pair_score", "dense_cos", "cheap_score"]
     out = pr[keep].copy()
     out.insert(0, "cand_id", pool["entity_id"].to_numpy()[pr["p_row"].to_numpy()])
     out.insert(0, "s1_id", s1["entity_id"].to_numpy()[pr["q_row"].to_numpy()])

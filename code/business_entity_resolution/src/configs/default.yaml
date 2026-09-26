@@ -49,6 +49,8 @@ blocking:
   addr_char_max_df: 2000
   name_tok_max_df: 200    # "rare" = df <= this within the country group
   num_key_max_df: 200
+  pair_k: 20              # name_pair / addr_pair channels (token-pair keys on fold forms)
+  pair_max_df: 500
   prune_top: 50
   train_sample_per_half: 250000  # train S1 queries per half (A, B); test uses all S1
   within_country: true  # EDA E5: 0/7,638,365 train pairs cross countries (memory.md SS6)

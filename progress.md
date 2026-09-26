@@ -1,18 +1,19 @@
 # progress.md — Live task board
 
 > Updated at the end of every task (see `CLAUDE.md` §2). Timestamps in IST.
-> **Last updated:** 2026-09-26 17:20 IST
+> **Last updated:** 2026-09-26 21:45 IST
 
 ---
 
 ## Current focus
 
-**Phase 0: Setup — Prompt 1, in progress.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`), config, tests (16/16 passing incl. the 0.714 worked example) and `tools/kaggle_ops.py` are done and committed. Kaggle write-auth is **fixed** (see resolved blocker below); `er-code` uploaded to both runners, `er-data` upload in progress. Next: NB00 model download, then the EDA Kaggle kernel.
+**Phase 0/1: Setup + Data understanding — Prompt 1, essentially done.** Repo skeleton, core `src/` modules (`io_utils`, `metrics`, `check_outputs`, `eda`), config, tests (27/27 passing), `tools/kaggle_ops.py` and `tools/bundle_kernel.py` are done and committed. `er-code`/`er-data` uploaded to R1 (R2 added as `er-data` collaborator); NB00 completed on both runners (all 3 models downloaded, Apache-2.0 confirmed); NB01 EDA completed on R1 with real findings written into `memory.md` §5/§6 and `default.yaml` updated (one-owner=hard, within-country=true, scale_guard=true). Remaining before Prompt 2: none blocking — R2 still needs `er-data`'s own upload/NB00 output mirrored only if Prompt 2 needs it there.
 
 ## Blockers
 
 - [x] **Kaggle write-auth (resolved 2026-09-26 17:45 IST).** Root cause: the `KGAT_...` values are Kaggle's newer API-token format, not classic kaggle.json keys — they must go through `KAGGLE_API_TOKEN`/`access_token`, not `kaggle.json`'s `key` field (see `memory.md` pitfalls). Fixed by upgrading to `kaggle>=2.0`, switching both runners' credential files to `access_token`, and working around a Windows path-handling bug in the CLI's upload commands (`tools/kaggle_ops.py` now runs uploads with `cwd` set to the target folder + `-p .`). Verified end-to-end on both runners with a throwaway create+delete before touching real data.
-- [ ] Dataset present locally (`student_resource/`, 2.4 GB, confirmed 2026-09-26) but **local RAM is only ~822 MB free of 7.9 GB** — EDA and all other CPU-heavy steps must run as a Kaggle CPU kernel (NB01 etc.), not locally. Local machine is code-authoring + unit tests + git only.
+- [x] **Notebook self-sufficiency + mount-path issues (resolved 2026-09-26 ~21:00 IST).** NB01 initially broke on `sys.path.insert` + `from src import` (this Kaggle environment mounts datasets at `/kaggle/input/datasets/<owner>/<slug>/`, not the classic path). Fixed by making every notebook fully self-contained via `tools/bundle_kernel.py` (see `architecture.md` §6.1). Two follow-on bugs also fixed: missing `rapidfuzz` on an internet-OFF kernel (swapped to stdlib `difflib`), and a major perf bug in E9 (`isin()` against a 7.6M-item set called once per loop iteration instead of once — cut an ~80 min projected runtime to ~8 minutes actual).
+- [x] Dataset present locally (`student_resource/`, 2.4 GB, confirmed 2026-09-26); **local RAM only ~750-822 MB free of ~8 GB** — all CPU-heavy work (EDA done, future steps too) runs as a Kaggle CPU kernel, never locally. Local machine is code-authoring + unit tests + git only.
 - [x] Deadline time known: **27 Sep 23:59 IST**; freeze 19:30 IST; final upload by 21:00 IST
 - [ ] Google Form questions to organisers: Q3 (test-time statistics), Q5 (which submission counts for private), Q6 (doc length). Not blocking; fallbacks exist
 
@@ -38,15 +39,16 @@
 - [x] `src/metrics.py` (official F0.5 scorer + unit test = 0.714 example; bootstrap_diff; LOCO/blocking/error-bucket helpers stubbed, pending Prompt 2+) — commit `2b19ebf`
 - [x] `src/check_outputs.py` (pre-flight checks) — commit `2b19ebf`
 - [x] `configs/default.yaml` (at `src/configs/default.yaml`) — commit `2b19ebf`
-- [x] Upload code as `er-code` to both runners — done 2026-09-26 17:5x IST
-- [ ] Upload the dataset to Kaggle as `er-data` (both runners) — upload in progress (~2.4 GB, running in background)
-- [ ] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B (and Reranker-0.6B fallback) → Kaggle dataset `er-models`
+- [x] Upload code as `er-code` to both runners — done 2026-09-26 17:5x IST (R1 also holds `er-data`, R2 added as collaborator ~20:05 IST)
+- [x] Upload the dataset to Kaggle as `er-data` — done on R1 (single pre-zipped upload, 2404 MiB → 1010 MiB, ~46 min); R2 has collaborator access rather than its own copy (avoids a duplicate ~1 GB upload)
+- [x] **NB00**: download Qwen3-Embedding-0.6B, Qwen3-4B, Qwen3-Reranker-0.6B → completed successfully on **both** runners 2026-09-26 ~19:45 IST; all three confirmed Apache-2.0 via the actual model card `license:` field (`LICENSES.md` in each run's output). No HF token needed (rate-limit warning only, no errors)
+- [x] `src/eda.py` (E1-E12 + shortcut check, per-stage logging) + `tools/bundle_kernel.py` (self-contained kernel bundling) + `code/.../src/tests/test_eda.py` — 27/27 tests passing; commits `2c905eb`, `90abada`
 
 ### Phase 1: Data understanding — Prompt 1 (target: 16:30–17:30)
-- [ ] **NB01 EDA**: E1–E12 + shortcut check → write the findings into `memory.md` §6. **Runs as a Kaggle CPU kernel** (local RAM too tight); blocked on Kaggle write-auth to push the kernel. Raw row counts already measured locally via `wc -l` (fast, no pandas): see `memory.md` §5/§6 E1.
+- [x] **NB01 EDA**: E1–E12 + shortcut check → real findings written into `memory.md` §6 (completed 2026-09-26 ~21:37 IST on R1, full dataset, ~8.2 min runtime after fixing an E9 perf bug)
 - [x] Measure dataset scale (Q8) → decide whether the scale guard is on (`memory.md` §5) — **ON**, ~2.4 GB / millions of rows per file
-- [ ] Decide the one-owner mode (E4) and within-country blocking (E5) → `memory.md` §5 — needs the full EDA kernel
-- [ ] Measure the all-empty floor on train — needs the full EDA kernel
+- [x] Decide the one-owner mode (E4) and within-country blocking (E5) → `memory.md` §5/§6 — **E4: HARD** (0/7,638,365 shared), **E5: within-country blocking YES** (0/7,638,365 cross-country); both written into `default.yaml`
+- [x] Measure the all-empty floor on train — **0.0558** (memory.md §2, §6 E2)
 
 ### Phase 2: Foundations — Prompt 2 (target: 17:30–19:00)
 - [ ] `src/normalize.py` (Step 2) + unit tests (accents, ligatures, initials, numbers, landmarks, fold)
@@ -119,7 +121,7 @@
 
 | # | Time (IST) | Config / change | B F0.5 | LOCO-mean | Scrambled drop | Kept? | Note |
 |---|---|---|---|---|---|---|---|
-| — | | all-empty floor | | | | | |
+| — | 2026-09-26 21:37 | all-empty floor (train, full dataset) | 0.0558 | — | — | baseline | Singleton rate; nearly identical US (0.05583) vs India (0.05588) |
 
 ---
 

@@ -34,7 +34,7 @@
   - Truly empty + predicted anything = 0.0.
   - Has matches + predicted empty = 0.0.
   - Count form: `1.25·TP / (1.25·TP + 0.25·FN + FP)`, so an FP costs 4× an FN.
-- **Floor:** all-empty submission score = singleton rate (fill in below once measured).
+- **Floor:** all-empty submission score = singleton rate = **0.0558** (measured on train, see SS6 E2; overall and per-country nearly identical).
 
 ## 3. Rules (hard constraints)
 
@@ -67,6 +67,8 @@
 | 2026-09-26 15:10 | "Explain-the-difference" features: token alignment + relation types (typo / prefix / skeleton abbreviation / initialism / split-join); rare **unexplained** tokens are the main negative signal | Mirrors the noise process; language-free |
 | 2026-09-26 15:10 | Calibrated probabilities + **expected-F0.5 top-k decoder** per entity (includes the "empty" option) | Optimises the exact metric; handles singletons |
 | 2026-09-26 15:10 | **One-owner rule** (each S2/S3 → at most one S1), if EDA E4 confirms | S1 is deduplicated; kills chain/branch false merges |
+| 2026-09-26 21:40 IST | **E4 confirmed → one-owner mode = HARD** (0/7,638,365 matched IDs shared between two S1s) | `exclusivity.py` should default to `hard`, not `auto`/`soft`, though still verify on Half B per master plan SS13 |
+| 2026-09-26 21:40 IST | **E5 confirmed → within-country blocking = YES** (0/7,638,365 pairs cross countries) | `blocking.py`'s `within_country` config flag should be set `true` (equality-based, no hard-coded values), not left `auto` |
 | 2026-09-26 15:10 | Data split: Half A (55%) trains embedder, stage-1 and judge; Half B (45%) trains combiner, calibration and decoder | Prevents leakage and over-confidence |
 | 2026-09-26 15:10 | Blocking for A uses frozen embeddings; B and test use fine-tuned (if it passes gate G2) | A in-sample recall would be unrealistic |
 | 2026-09-26 15:10 | Model selection by **LOCO-mean** + **scrambled-letter test**, never by the public leaderboard | Proxy for an unseen country |
@@ -87,21 +89,23 @@
 
 ## 6. EDA findings (fill in during Step 1)
 
+Run 2026-09-26 ~21:37 IST on Kaggle CPU kernel `nb01-eda` (R1), full train+test dataset (no sampling except where noted). Raw output: `reports/eda.json` (not committed; fetch via `kaggle kernels output` if needed again).
+
 | ID | Question | Finding |
 |---|---|---|
-| E1 | Sizes S1/S2/S3 per split and country | Row counts (all rows, pre country split — see SS5 decision above): train S1 2,206,821 / S2 5,034,616 / S3 5,285,603; test S1 1,732,544 / S2 4,887,273 / S3 5,082,316. Per-country breakdown TBD (needs a Kaggle CPU kernel) |
-| E2 | Singleton rate overall / per country (= all-empty floor) | TBD |
-| E3 | #matches per S1 (S2 vs S3) | TBD |
-| E4 | Any S2/S3 ID under two S1s? | TBD → decides the one-owner mode |
-| E5 | Matches crossing countries? | TBD → decides within-country blocking |
-| E6 | Share of S2/S3 matching nothing | TBD |
-| E7 | Exact-name / exact-address rates among positives | TBD |
-| E8 | Noise census per source (typo / abbrev / drop / reorder / landmark / missing postcode) | TBD |
-| E9 | Hard negatives (high name similarity, non-match) | TBD |
-| E10 | Empty / short fields; non-Latin scripts | TBD |
-| E11 | Postcode formats | TBD |
-| E12 | Test: country labels, sizes, character set | TBD |
-| — | Shortcut check: do ID numbers or row order correlate with matches? (detect only, never use) | TBD |
+| E1 | Sizes S1/S2/S3 per split and country | **Train:** S1 2,206,821 (US 1,323,633 / India 883,188); S2 5,034,616 (US 3,016,817 / India 2,017,799); S3 5,285,603 (US 3,170,056 / India 2,115,547). **Test:** S1 1,732,544 (India 809,986 / US 663,106 / France 259,452); S2 4,887,273; S3 5,082,316 |
+| E2 | Singleton rate overall / per country (= all-empty floor) | **Overall 0.0558** (India 0.05588, US 0.05583 — nearly identical across countries). **All-empty floor = 0.0558** |
+| E3 | #matches per S1 (S2 vs S3) | Mean 3.46; percentiles p50=3, p75=5, p90=6, p95=6, p99=8, max=11. S2 supplies 48.4% of matches, S3 51.6% — roughly even |
+| E4 | Any S2/S3 ID under two S1s? | **0 / 7,638,365 matched IDs (0.00000)** → **one-owner mode: HARD** (S1 is truly deduplicated in this data; no soft/none fallback needed) |
+| E5 | Matches crossing countries? | **0 / 7,638,365 pairs (0.00000)** → **within-country blocking: YES** (equality-based, never hard-coded values) |
+| E6 | Share of S2/S3 matching nothing | S2 26.6% unmatched, S3 25.4% unmatched — about a quarter of each source is pure noise/singletons from the matching perspective |
+| E7 | Exact-name / exact-address rates among positives | (300k-pair sample) exact-name 15.8%, exact-address 7.4%, both-exact only 0.83%, name-only-noise 6.6%, address-only-noise 15.0% → **most positives have noise somewhere**; address noise slightly more common than name noise |
+| E8 | Noise census per source (typo / abbrev / drop / reorder / landmark / missing postcode) | (300k-pair sample, name field, cheap heuristic — not full explain_diff.py) exact 15.8%, typo 28.3%, abbrev/drop 25.8%, reorder 5.9%, other/unclassified 24.2%. Typo and abbreviation/drop are the two biggest noise categories |
+| E9 | Hard negatives (high name similarity, non-match) | 9/500 sampled S1 entities (1.8%) had a same-country non-match with name similarity ≥85 (difflib ratio). Examples are exactly the generic-chain-name pattern master plan risk R20 predicted (India "X Private Limited" / "X Enterprises Private Limited" collisions) — confirms number/unexplained-rare-word features and exclusivity matter |
+| E10 | Empty / short fields; non-Latin scripts | S1: 0% empty name/address, 0.16% short names (<5 chars), **0% non-Latin**. **S2: 16.6% non-Latin, 3.4% empty address. S3: 13.0% non-Latin, 3.3% empty address.** S1 is clean; S2/S3 carry real non-Latin-script content (likely native-script India variants) — normalization/embeddings must handle this (risk R21) even though S1 alone looks Latin-only |
+| E11 | Postcode formats | Naive shape-only regex (last 4-6 digit run) found US mostly 4-digit (614,255) then 5-digit (141,060); India mostly 4-digit (68,623) then 5-digit (2,441). **This is very likely picking up house/unit numbers, not real postal codes**, for a meaningful share of rows (US ZIPs are 5-digit, India PIN codes are 6-digit) — the naive last-digit-run heuristic is not reliable on its own; Step 8's number/postcode extractor will need position/context refinement, not just "last digit run" |
+| E12 | Test: country labels, sizes, character set | France 259,452 (15.0%), India 809,986 (46.8%), US 663,106 (38.3%) of 1,732,544 test S1. **0% non-Latin in test S1** across all three countries (consistent with S1's E10 finding — S1 itself stays Latin-only even in the unseen France split) |
+| — | Shortcut check: do ID numbers or row order correlate with matches? (detect only, never use) | Row-index vs. match-count correlation ≈ **0.00028 (effectively zero)** — no shortcut. ID-number correlation returned NaN (extraction/dtype edge case in the diagnostic itself, not a data signal); row-index result alone is sufficient to confirm no shortcut, but the NaN should be fixed if this check is reused later |
 
 ## 7. Metrics definitions
 

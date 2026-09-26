@@ -1,0 +1,16 @@
+student_resource/
+output/*.tsv
+reports/raw/
+*.npy
+*.parquet
+models/
+wheels/
+CLAUDE.local.md
+.env*
+PROMPTS.md
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.DS_Store
+.kaggle-profiles/

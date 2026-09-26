@@ -201,11 +201,13 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
     Runs with `cwd=kernel_dir` and `-p .` (Windows path-bug workaround, see
     module docstring).
 
-    `kernel-metadata.json` in `kernel_dir` must have its `id` field's owner set
-    to `PLACEHOLDER` (e.g. `"PLACEHOLDER/nb00-download-models"`); this function
-    rewrites it to `<runner's username>/<slug>` before pushing and restores the
-    placeholder afterwards, so the same kernel folder can be pushed to either
-    runner without hard-coding a username in a file that gets zipped/committed.
+    `kernel-metadata.json` in `kernel_dir` must have its `id` field, and any
+    `dataset_sources` entries, prefixed with `PLACEHOLDER/` (e.g.
+    `"PLACEHOLDER/nb00-download-models"`, `"PLACEHOLDER/er-code"`); this
+    function rewrites every `PLACEHOLDER/` to `<runner's username>/` before
+    pushing and restores the placeholders afterwards, so the same kernel
+    folder can be pushed to either runner without hard-coding a username in a
+    file that gets zipped/committed.
 
     Inputs: kernel_dir - folder containing kernel-metadata.json + notebook source;
             runner - "R1"/"R2"; accelerator - value accepted by `kaggle kernels
@@ -217,11 +219,8 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
     kernel_dir = Path(kernel_dir).resolve()
     _, username = runner_config(runner)
     meta_path = kernel_dir / "kernel-metadata.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    original_id = meta["id"]
-    owner, _, slug = original_id.partition("/")
-    meta["id"] = f"{username}/{slug}"
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    original_text = meta_path.read_text(encoding="utf-8")
+    meta_path.write_text(original_text.replace("PLACEHOLDER/", f"{username}/"), encoding="utf-8")
     try:
         args = ["kernels", "push", "-p", "."]
         if accelerator:
@@ -231,8 +230,7 @@ def push_notebook(kernel_dir: Path | str, runner: str, accelerator: str | None =
         result = _run_kaggle(args, runner, cwd=kernel_dir)
         return result.stdout
     finally:
-        meta["id"] = original_id
-        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        meta_path.write_text(original_text, encoding="utf-8")
 
 
 def wait(slug: str, runner: str, poll: int = 300, max_polls: int = 200) -> str:

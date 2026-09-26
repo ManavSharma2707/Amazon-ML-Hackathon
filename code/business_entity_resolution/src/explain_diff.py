@@ -20,59 +20,66 @@ import re
 
 from . import blocking, normalize
 
-try:  # C++ edit distances; the fallback below gives the same answers, only slower
-    from rapidfuzz.distance import DamerauLevenshtein as _DL
-    from rapidfuzz.distance import JaroWinkler as _JW
+def _py_dl(a: str, b: str) -> int:
+    """Optimal-string-alignment Damerau-Levenshtein distance (stdlib fallback)."""
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = a[i - 1] != b[j - 1]
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if prev2 is not None and i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[len(b)]
 
-    def _dl(a: str, b: str) -> int:
-        """Damerau-Levenshtein distance (rapidfuzz)."""
-        return _DL.distance(a, b)
 
-    def _jw(a: str, b: str) -> float:
-        """Jaro-Winkler similarity in [0, 1] (rapidfuzz)."""
-        return _JW.similarity(a, b)
+def _py_jw(a: str, b: str) -> float:
+    """Jaro-Winkler similarity (stdlib fallback, prefix scale 0.1, max prefix 4)."""
+    if a == b:
+        return 1.0
+    la, lb = len(a), len(b)
+    if not la or not lb:
+        return 0.0
+    win = max(max(la, lb) // 2 - 1, 0)
+    ma, mb = [False] * la, [False] * lb
+    m = 0
+    for i, ch in enumerate(a):
+        for j in range(max(0, i - win), min(lb, i + win + 1)):
+            if not mb[j] and b[j] == ch:
+                ma[i] = mb[j] = True
+                m += 1
+                break
+    if not m:
+        return 0.0
+    sa = [a[i] for i in range(la) if ma[i]]
+    sb = [b[j] for j in range(lb) if mb[j]]
+    t = sum(x != y for x, y in zip(sa, sb)) / 2
+    jaro = (m / la + m / lb + (m - t) / m) / 3
+    p = 0
+    while p < min(4, la, lb) and a[p] == b[p]:
+        p += 1
+    return jaro + p * 0.1 * (1 - jaro)
 
-except ImportError:  # pragma: no cover - exercised only where rapidfuzz is missing
 
-    def _dl(a: str, b: str) -> int:
-        """Optimal-string-alignment Damerau-Levenshtein distance (stdlib fallback)."""
-        prev2, prev = None, list(range(len(b) + 1))
-        for i in range(1, len(a) + 1):
-            cur = [i] + [0] * len(b)
-            for j in range(1, len(b) + 1):
-                cost = a[i - 1] != b[j - 1]
-                cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-                if prev2 is not None and i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
-                    cur[j] = min(cur[j], prev2[j - 2] + 1)
-            prev2, prev = prev, cur
-        return prev[len(b)]
+_DIST: tuple | None = None
 
-    def _jw(a: str, b: str) -> float:
-        """Jaro-Winkler similarity (stdlib fallback, prefix scale 0.1, max prefix 4)."""
-        if a == b:
-            return 1.0
-        la, lb = len(a), len(b)
-        if not la or not lb:
-            return 0.0
-        win = max(max(la, lb) // 2 - 1, 0)
-        ma, mb = [False] * la, [False] * lb
-        m = 0
-        for i, ch in enumerate(a):
-            for j in range(max(0, i - win), min(lb, i + win + 1)):
-                if not mb[j] and b[j] == ch:
-                    ma[i] = mb[j] = True
-                    m += 1
-                    break
-        if not m:
-            return 0.0
-        sa = [a[i] for i in range(la) if ma[i]]
-        sb = [b[j] for j in range(lb) if mb[j]]
-        t = sum(x != y for x, y in zip(sa, sb)) / 2
-        jaro = (m / la + m / lb + (m - t) / m) / 3
-        p = 0
-        while p < min(4, la, lb) and a[p] == b[p]:
-            p += 1
-        return jaro + p * 0.1 * (1 - jaro)
+
+def _distances() -> tuple:
+    """(damerau_levenshtein, jaro_winkler) functions: rapidfuzz (C++) if importable, else the stdlib fallbacks.
+
+    Resolved on first use, not at import: Kaggle kernels install rapidfuzz from
+    offline wheels after the bundled modules are loaded. Both give the same answers.
+    """
+    global _DIST
+    if _DIST is None:
+        try:
+            from rapidfuzz.distance import DamerauLevenshtein, JaroWinkler
+
+            _DIST = (DamerauLevenshtein.distance, JaroWinkler.similarity)
+        except ImportError:
+            _DIST = (_py_dl, _py_jw)
+    return _DIST
 
 
 # Prior strengths used only to order links in the alignment (plan SS13.1);
@@ -153,7 +160,8 @@ def _relation(a: str, b: str) -> str:
     s, l = (da, db) if len(da) <= len(db) else (db, da)
     if len(s) >= 3:
         lim = 1 if len(l) <= 5 else 2
-        if _dl(da, db) <= lim or _dl(fa, fb) <= lim or _jw(da, db) >= 0.92:
+        dl, jw = _distances()
+        if dl(da, db) <= lim or dl(fa, fb) <= lim or jw(da, db) >= 0.92:
             return "typo"
     if len(s) < 2 or len(s) >= len(l):
         return "none"

@@ -37,6 +37,8 @@ import time
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
@@ -60,25 +62,76 @@ def ensure_rapidfuzz() -> None:
         pass
     wheels = kaggle_env.find_input("wheels")
     kaggle_env.log(f"installing rapidfuzz from {wheels}")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--no-index", "--find-links", str(wheels), "rapidfuzz"],
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "--no-index", "--find-links", str(wheels), "rapidfuzz"],
                    check=True)
     importlib.invalidate_caches()
     importlib.import_module("rapidfuzz.process").cpdist  # noqa: B018
 
 
+def _arrow_strings(t):
+    """types_mapper: strings stay Arrow-backed (compact, no Python objects); other types as usual."""
+    return pd.ArrowDtype(t) if pa.types.is_string(t) or pa.types.is_large_string(t) else None
+
+
+def read_pq(path, columns=None) -> pd.DataFrame:
+    """Parquet -> DataFrame with Arrow-backed string columns (10M-row record tables stay a few GB)."""
+    return pq.read_table(path, columns=columns).to_pandas(types_mapper=_arrow_strings)
+
+
 def load_records(recs_dir, split: str):
     """S1 and pool (S2 then S3) record frames with the feature columns."""
-    s1 = pd.read_parquet(recs_dir / f"records_{split}_S1.parquet", columns=REC_COLS)
-    pool = pd.concat([pd.read_parquet(recs_dir / f"records_{split}_S{s}.parquet", columns=REC_COLS) for s in (2, 3)],
-                     ignore_index=True)
+    s1 = read_pq(recs_dir / f"records_{split}_S1.parquet", REC_COLS)
+    pool = pd.concat([read_pq(recs_dir / f"records_{split}_S{s}.parquet", REC_COLS) for s in (2, 3)], ignore_index=True)
     return s1, pool
+
+
+def cand_columns(path) -> list[str]:
+    """Candidate columns present in an NB05 file (older versions lack some channel scores)."""
+    names = set(pq.ParquetFile(path).schema_arrow.names)
+    return [c for c in CAND_COLS if c in names]
+
+
+def fill_missing(c: pd.DataFrame) -> pd.DataFrame:
+    """Add absent channel-score columns as NaN (channel not run in that NB05 version)."""
+    for col in CAND_COLS:
+        if col not in c:
+            c[col] = np.float32(np.nan)
+    return c
+
+
+def read_cands(path) -> pd.DataFrame:
+    """Whole NB05 candidate file (train halves: ~12.5M rows)."""
+    return fill_missing(read_pq(path, cand_columns(path)))
+
+
+def iter_s1_batches(path, n_rows: int):
+    """Stream a candidate file in batches of whole S1s (NB05 writes each S1's rows contiguously).
+
+    Keeps the 86M-row test file out of memory. Asserts the contiguity it relies on.
+    """
+    seen: set = set()
+    carry = None
+    for rb in pq.ParquetFile(path).iter_batches(batch_size=n_rows, columns=cand_columns(path)):
+        df = fill_missing(rb.to_pandas(types_mapper=_arrow_strings))
+        if carry is not None:
+            df = pd.concat([carry, df], ignore_index=True)
+        tail = (df["s1_id"] == df["s1_id"].iloc[-1]).to_numpy(dtype=bool)
+        carry, df = df[tail], df[~tail]
+        if len(df):
+            ids = set(df["s1_id"].unique().tolist())
+            assert not ids & seen, "candidate rows of one S1 are not contiguous"
+            seen |= ids
+            yield df.reset_index(drop=True)
+    if carry is not None and len(carry):
+        assert carry["s1_id"].iloc[0] not in seen
+        yield carry.reset_index(drop=True)
 
 
 def add_labels(c: pd.DataFrame, gt: pd.DataFrame) -> np.ndarray:
     """0/1 label per candidate row from the ground-truth pairs (s1_id, match_id)."""
     key = c["s1_id"].astype(str) + "|" + c["cand_id"].astype(str)
     true = set((gt["s1_id"].astype(str) + "|" + gt["match_id"].astype(str)).tolist())
-    return key.isin(true).to_numpy().astype(np.int8)
+    return np.asarray(key.isin(true), dtype=bool).astype(np.int8)
 
 
 def s1_chunks(c: pd.DataFrame, size: int):
@@ -165,15 +218,21 @@ def main() -> None:
     metrics["generic_tokens_sample"] = {"name": sorted(lookups["generic_name"])[:40], "addr": sorted(lookups["generic_addr"])[:40]}
     cands = {}
     rng = np.random.default_rng(SEED)
+    nb05_metrics = cand_dir / "metrics.json"
+    if nb05_metrics.exists():  # records which NB05 version (channel set) these candidates come from
+        import json
+
+        metrics["nb05_blocking_config"] = json.loads(nb05_metrics.read_text()).get("blocking_config")
+    metrics["nb05_has_cross_pair"] = "cross_pair_score" in cand_columns(cand_dir / "cands_test.parquet")
     for h, cap in (("A", A_S1_CAP), ("B", B_S1_CAP)):
-        c = pd.read_parquet(cand_dir / f"cands_{h}.parquet", columns=CAND_COLS)
+        c = read_cands(cand_dir / f"cands_{h}.parquet")
         ids = c["s1_id"].unique()
         if len(ids) > cap:
             keep = set(rng.choice(ids, cap, replace=False).tolist())
             c = c[c["s1_id"].isin(keep)].reset_index(drop=True)
         cands[h] = c
         kaggle_env.log(f"cands {h}: {len(c):,} pairs, {c['s1_id'].nunique():,} S1")
-    n_test = int(pd.read_parquet(cand_dir / "cands_test.parquet", columns=["s1_id"]).shape[0])
+    n_test = int(pq.ParquetFile(cand_dir / "cands_test.parquet").metadata.num_rows)
 
     # ---------------- 1. timing -> scale-guard decision ----------------
     ca = cands["A"]
@@ -224,7 +283,7 @@ def main() -> None:
                                  "pos_rate": round(float(y.mean()), 5)}
         kaggle_env.log(f"  {h}: {metrics[f'cands_{h}']}")
         save_feats(WORK / f"feats_{h}.parquet", c, f, y)
-    cty = s1.set_index("entity_id")["country"]
+    cty = pd.Series(s1["country"].to_numpy(), index=s1["entity_id"].to_numpy())
     del cands, s1, pool
     gc.collect()
 
@@ -258,15 +317,11 @@ def main() -> None:
     # ---------------- 5. test: pre-rank + features + stage-1, in S1 chunks ----------------
     s1, pool = load_records(recs_dir, "test")
     lookups = features.token_lookups(pd.read_parquet(recs_dir / "stats_test.parquet"))
-    ct = pd.read_parquet(cand_dir / "cands_test.parquet", columns=CAND_COLS)
     (WORK / "feats_test").mkdir(exist_ok=True)
     outs, n_parts = [], 0
-    ids = ct["s1_id"].unique()
-    kaggle_env.log(f"test: {len(ct):,} pairs, {len(ids):,} S1 with candidates (of {len(s1):,})")
-    big = CHUNK_S1 * 2  # outer chunks bound the size of each saved part (and peak memory)
-    for s in range(0, len(ids), big):
-        keep = set(ids[s : s + big].tolist())
-        c, f = run_chunks(ct[ct["s1_id"].isin(keep)], s1, pool, lookups, pre_model, f"test[{s // big}]")
+    kaggle_env.log(f"test: {n_test:,} candidate pairs for {len(s1):,} S1, streamed in batches of whole S1s")
+    for batch in iter_s1_batches(cand_dir / "cands_test.parquet", CHUNK_S1 * 50):
+        c, f = run_chunks(batch, s1, pool, lookups, pre_model, f"test[{n_parts}]")
         p = stage1.predict(model, f.to_numpy(np.float32), N_JOBS)
         save_feats(WORK / "feats_test" / f"part-{n_parts:03d}.parquet", c, f)
         outs.append(pd.DataFrame({"s1_id": c["s1_id"], "cand_id": c["cand_id"], "p1": p, "cheap_score": c["cheap_score"]}))
@@ -276,7 +331,7 @@ def main() -> None:
     p1t = pd.concat(outs, ignore_index=True)
     assert not p1t.duplicated(["s1_id", "cand_id"]).any()
     p1t.to_parquet(WORK / "p1_test.parquet", index=False)
-    tc = s1.set_index("entity_id")["country"]
+    tc = pd.Series(s1["country"].to_numpy(), index=s1["entity_id"].to_numpy())
     per = p1t.assign(country=p1t["s1_id"].map(tc)).groupby("country")
     metrics["test"] = {"n_pairs": int(len(p1t)), "n_s1_with_cands": int(p1t["s1_id"].nunique()), "n_s1": int(len(s1)),
                        "per_country": {k: {"pairs_per_s1": round(float(len(g) / g["s1_id"].nunique()), 2),

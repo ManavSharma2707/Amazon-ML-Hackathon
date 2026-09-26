@@ -115,9 +115,12 @@ def set_context(s1: pd.DataFrame, pool: pd.DataFrame, lookups: dict) -> None:
     for side, df in (("s", s1), ("p", pool)):
         for c in REC_COLS[1:]:
             col = df[c]
-            _CTX[f"{side}_{c}"] = col.astype(bool).tolist() if c == "name_romanized" else col.astype(str).tolist()
-        _CTX[f"{side}_arr"] = {c: df[c].astype(str).to_numpy(dtype=object) for c in ("norm_name", "fold_name", "norm_addr", "fold_addr")}
-        _CTX[f"{side}_len"] = {c: df[c].astype(str).str.len().to_numpy(np.int32) for c in _CTX[f"{side}_arr"]}
+            _CTX[f"{side}_{c}"] = (np.asarray(col, dtype=bool).tolist() if c == "name_romanized"
+                                   else [str(x) for x in col.tolist()])
+        # fresh Python objects for the (subset) records: forked workers then only touch these pages
+        _CTX[f"{side}_arr"] = {c: np.array([str(x) for x in df[c].tolist()], dtype=object)
+                               for c in ("norm_name", "fold_name", "norm_addr", "fold_addr")}
+        _CTX[f"{side}_len"] = {c: np.fromiter(map(len, a), dtype=np.int32, count=len(a)) for c, a in _CTX[f"{side}_arr"].items()}
     _CTX["lookups"] = lookups
     explain_diff._CACHE.clear()
 
@@ -234,13 +237,13 @@ def meta_features(cands: pd.DataFrame, pool_is_s3: np.ndarray, p_rows: np.ndarra
     """
     n = len(cands)
     cols = []
-    bm = cands["bitmask"].to_numpy().astype(np.int64)
+    bm = np.asarray(cands["bitmask"], dtype=np.int64)
     for c in SPARSE_CHANNELS:
         cols.append(((bm & blocking._BIT[c]) > 0).astype(np.float32))
     for c in SPARSE_CHANNELS:
-        cols.append(cands[f"{c}_score"].to_numpy(np.float32))
-    cols.append(cands["n_channels"].to_numpy(np.float32))
-    sc = cands[score_col].to_numpy(np.float32)
+        cols.append(np.asarray(cands[f"{c}_score"], dtype=np.float32))
+    cols.append(np.asarray(cands["n_channels"], dtype=np.float32))
+    sc = np.asarray(cands[score_col], dtype=np.float32)
     order = np.lexsort((-sc, q_rows))
     qs = q_rows[order]
     starts = np.flatnonzero(np.r_[True, qs[1:] != qs[:-1]])
@@ -304,7 +307,7 @@ def build_features(cands: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lo
     cands = cands.reset_index(drop=True)
     q, p = rows_for(cands, s1, pool)
     set_context(s1, pool, lookups)
-    is_s3 = pool["entity_id"].str.startswith("S3-").to_numpy()
+    is_s3 = np.asarray(pool["entity_id"].str.startswith("S3-"), dtype=bool)
     meta = meta_features(cands, is_s3, p, q, score_col)
     # sort by S1 row for the per-S1 cache in the workers, then restore order
     order = np.argsort(q, kind="stable")

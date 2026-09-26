@@ -51,14 +51,15 @@
 - [x] Measure the all-empty floor on train — **0.0558** (memory.md §2, §6 E2)
 
 ### Phase 2: Foundations — Prompt 2 (target: 17:30–19:00)
-- [ ] `src/normalize.py` (Step 2) + unit tests (accents, ligatures, initials, numbers, landmarks, fold)
-- [ ] `src/corpus_stats.py` (IDF global/local, suffix-likeness, street-type-likeness; train-only fallback flag)
-- [ ] `src/split.py` (A/B stratified by country × match-count bucket)
-- [ ] **NB02** run → `er-norm_v1`
+- [x] `src/normalize.py` (Step 2) + unit tests (accents, ligatures, initials, numbers incl. bis/ter, postcodes by shape+position, landmarks, fold, **stdlib Brahmic-script romanisation**, domains, `null` tokens) — commit `02851b6`
+- [x] `src/corpus_stats.py` (per-country + global df, IDF, suffix-likeness, street-type-likeness; incremental `TokenCounter`; `stats_mode` flag in config) — commit `02851b6`
+- [x] `src/split.py` (A/B stratified by country × match-count bucket; pool records follow their S1; unmatched = shared) — commit `02851b6`
+- [x] **NB02** run → `er-nb02-normalize` v1 (R1, CPU, 57 min, 2026-09-26 23:05 IST): row counts = EDA E1; A 1,213,752 / B 993,069 S1, singleton rate 0.05585 in both; name_empty 0%; romanised India S2 23.5% / S3 13%; house number 90–100%, postcode < 1.3%. Report: `reports/raw/nb02/metrics.json`
+- [ ] **Fix before Prompt 3:** suffix-likeness top list is dominated by typo variants (`limitet`, `drve`) — the frequency sigmoid is too weak; add a min-frequency floor before using it as a feature
 - [ ] **NB03** frozen embeddings (GPU) → `er-emb_v1`
 
 ### Phase 3: Blocking — Prompt 2 (target: 19:00–21:00)
-- [ ] `src/blocking.py`: dense, reverse dense, TF-IDF name/address, number/postcode key, rare-token key; cheap-score pruning to top-50
+- [x] `src/blocking.py`: dense, reverse dense, char TF-IDF name/address, rare-token key (norm+fold), house-number+street key; LightGBM pre-ranker (trained on A) pruning to top-50 — commit `ad14726`
 - [ ] Blocking report: pair recall, entity-complete recall, RR, candidates/S1, per-channel unique contribution, per country, scrambled
 - [ ] **Gate G1**: pair recall ≥ 0.99 on B (hard minimum 0.95)
 - [ ] **NB04** fine-tune embedder on A (GPU) → `er-embedder_v1`

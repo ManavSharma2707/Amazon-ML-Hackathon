@@ -190,7 +190,7 @@ Ask the organisers through the official **Google Form** linked in the guidelines
 | # | Question | Owner | Status |
 |---|---|---|---|
 | Q1 | Exact submission deadline time | — | **Resolved:** 27 Sep 23:59 IST |
-| Q2 | Team members and git author identity | User | open |
+| Q2 | Team members and git author identity | User | **Resolved:** team "Brocode" — Manav Sharma, Atharva Rathi (2026-09-27 22:40 IST) |
 | Q3 | Are rarity/suffix statistics computed on test files at inference (no labels, no training) OK? Fallback: train-only stats (plan §9.4) | User → Google Form | open |
 | Q4 | Dataset available locally and as Kaggle dataset `er-data`? | User | open |
 | Q5 | Which submission's score is used for the private leaderboard: best public, latest, or a selected one? | User → Google Form | open |

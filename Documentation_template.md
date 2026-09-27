@@ -1,7 +1,7 @@
 # ML Challenge 2026: Business Entity Resolution Solution Template
 
-**Team Name:** [TEAM NAME — fill in from CLAUDE.local.md before submitting]
-**Team Members:** [list all team members]
+**Team Name:** Brocode
+**Team Members:** Manav Sharma, Atharva Rathi
 **Submission Date:** 27 September 2026
 
 ---

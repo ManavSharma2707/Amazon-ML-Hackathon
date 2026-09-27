@@ -1,6 +1,6 @@
 # Business Entity Resolution — Approach Summary
 
-**Team:** [TEAM NAME — fill in from CLAUDE.local.md] · Amazon ML Challenge 2026
+**Team:** Brocode · Amazon ML Challenge 2026
 
 ## Approach
 

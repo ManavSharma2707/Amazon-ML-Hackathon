@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features", "stage1",
+              "decoder", "exclusivity", "scramble", "check_outputs"],
+  "driver": "../nb09v7_decode_submit/driver.py",
+  "output": "nb09v7_decode_submit_dry.py",
+  "config": true
+}

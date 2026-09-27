@@ -159,6 +159,7 @@ def error_buckets(pred, truth, cands, s1_ids, name_sim=None, number_conflict=Non
     # records predicted for a different S1 than the one being judged
     owner = pr.groupby("cand_id")["s1_id"].agg(lambda s: set(s.tolist()))
     def claimed_elsewhere(d):
+        """True where a row's cand_id is predicted for some OTHER S1 too (a multi-claim conflict)."""
         o = d["cand_id"].map(owner)
         return np.array([isinstance(x, set) and bool(x - {s}) for x, s in zip(o, d["s1_id"])], dtype=bool)
     mc = set(fp.loc[claimed_elsewhere(fp), "s1_id"]) | set(fn.loc[claimed_elsewhere(fn), "s1_id"]) if len(fp) + len(fn) else set()

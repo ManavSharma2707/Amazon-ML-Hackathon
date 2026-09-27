@@ -436,6 +436,7 @@ def build_positive_pairs_sample(exploded: pd.DataFrame, s1: pd.DataFrame, s2: pd
     s23 = pd.concat([s2, s3], ignore_index=True).set_index("entity_id")[["business_name", "business_address"]]
 
     def norm(text: str) -> str:
+        """Casefold + collapse whitespace, for a rough same-name/same-address check."""
         return re.sub(r"\s+", " ", text.casefold()).strip()
 
     sample = sample.join(s1_lookup.rename(columns={"business_name": "name_a", "business_address": "addr_a"}), on="s1_id")

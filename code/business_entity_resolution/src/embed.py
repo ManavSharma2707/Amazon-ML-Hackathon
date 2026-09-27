@@ -128,6 +128,7 @@ def encode(
     state = {"done": 0, "last": time.time(), "t0": time.time()}
 
     def work(worker: int) -> None:
+        """Thread target: encode this worker's share of `batches` on its own GPU/embedder."""
         emb = embedders[worker]
         for b in batches[worker :: len(embedders)]:
             out[b] = emb.encode_batch([texts[i] for i in b])
@@ -230,6 +231,7 @@ def knn_within_groups(
     labels.sort(key=lambda g: -int((q_groups == g).sum()))
 
     def run(dev_i: int) -> None:
+        """Thread target: this device's share of country/split groups, largest first."""
         for g in labels[dev_i :: len(devices)]:
             qi = np.flatnonzero(q_groups == g)
             pi = np.flatnonzero(p_groups == g)

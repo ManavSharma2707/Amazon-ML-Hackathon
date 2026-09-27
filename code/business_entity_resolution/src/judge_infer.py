@@ -63,6 +63,7 @@ def score_budgeted(models: list, ids: list[list[int]], budget_s: float, batch: i
     lock = threading.Lock()
 
     def work(tok, model, device):
+        """Thread target: pull batches off the shared queue and score them on this (tok, model, device) until the deadline."""
         while time.time() < deadline:
             try:
                 a, b = jobs.get_nowait()

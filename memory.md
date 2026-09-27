@@ -23,6 +23,7 @@
 | Team size / roles | 3–4 members (competition rule). Planned roles: P1 CPU track, P2 GPU track, P3 Validation and packaging (+ P4 helps P1) |
 | Compute | Kaggle: P100 or 2× T4 (16 GB each), ~30 GPU h/week, 9–12 h sessions, fp16 only (no bf16), no flash-attn 2. Runner details: `CLAUDE.local.md` (not committed) |
 | Leaderboard context (2026-09-26) | Top public scores ≈ **0.99**; the competition is decided in the last 1%. Private board includes France and **both boards count** for shortlisting |
+| **Rule update (seen on Unstop upload page, 2026-09-27 ~17:10 IST)** | 📣 **`candidate_pairs.tsv` is now explicitly part of the final submission and is reviewed alongside `matching_results.tsv` when deciding final rankings.** Stated reason: blocking has to scale (can't compare every record to every other), and **a smaller candidate set per S1 entity ranks higher, beyond the public/private leaderboard score.** Confirms our existing design (candidate_pairs.tsv = exactly the scored set, never padded) is the right shape; also means candidate-set **size** is now a tie-break/ranking factor, not just recall — a reason to prefer a tighter pre-ranker (our shipped run uses ~20 candidates/S1 after the scale-guard) over a looser one, all else equal. The Unstop upload UI only has a single-file `matching_results.tsv` (TSV) upload box in the panel seen; where/how `candidate_pairs.tsv` and the rest of the zip get submitted was not yet visible on that screen — confirm with the user before assuming it's the same zip flow as before |
 
 ## 2. Problem summary
 

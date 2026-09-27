@@ -17,3 +17,5 @@ __pycache__/
 .kaggle-profiles/
 .claude/
 sample/
+SUBMISSION_READY.md
+submission_package/

@@ -31,12 +31,14 @@ Outputs in /kaggle/working:
 """
 
 import gc
+import json
 import os
 import time
 
 import numpy as np
 import pandas as pd
 
+RESUME = globals().get("RESUME", False)  # see nb05v7_translit_resume/: reuses this driver, skips the train phase
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
 BC = dict(CONFIG["blocking"])
@@ -241,6 +243,52 @@ def _ensure_anyascii() -> None:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "anyascii==0.3.3"], check=True)
 
 
+def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, model, out_path) -> dict:
+    """Run `build_candidates` for one test country in a forked child process; return its stats.
+
+    The second real Kaggle run got through France cleanly, then France->India->US
+    died partway through India's channels ("Killed", OOM) even though each
+    channel's own transient memory is freed (`gc.collect()`) after it completes --
+    RSS still climbed across ~10 sequential large sparse-matrix operations for
+    one huge country (809,986 queries x 4.7M pool) before the union/prune step
+    that already bounds memory even got a chance to run. Freed Python memory
+    isn't always returned to the OS immediately (allocator fragmentation), so a
+    long in-process sequence of big allocations can still OOM a process that
+    would be fine doing the same work fresh. Isolating each country in its own
+    forked child (Linux copy-on-write: no pickling of s1/pool, no real cost to
+    fork) makes that moot -- the OS reclaims everything the instant the child
+    exits, so the parent always starts each country from a clean slate.
+
+    Inputs: country - label (report key only); s1, pool - test record frames
+            (read-only, shared via fork, never pickled); qr - this country's S1
+            row ids; model - the pruner Booster; out_path - Path to write the
+            country's `to_cands` parquet to.
+    Outputs: stats dict (n_s1, union_per_s1_mean, cands_per_s1_mean/p95,
+    share_s1_zero_cands), also written to `out_path` with a `.stats.json` suffix.
+    """
+    stats_path = out_path.with_suffix(".stats.json")
+    pid = os.fork()
+    if pid == 0:  # child: do the heavy work, write results, exit -- never returns
+        try:
+            pr = build_candidates("test", s1, pool, qr, model=model)
+            cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
+            stats = {"n_s1": int(len(qr)), "union_per_s1_mean": round(pr.attrs["n_union"] / len(qr), 2),
+                     "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
+                     "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
+            to_cands(pr, s1, pool).to_parquet(out_path, index=False, compression="zstd")
+            stats_path.write_text(json.dumps(stats), encoding="utf-8")
+            os._exit(0)
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+            os._exit(1)
+    _, status = os.waitpid(pid, 0)
+    if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+        raise RuntimeError(f"country {country!r} subprocess failed (status {status})")
+    return json.loads(stats_path.read_text(encoding="utf-8"))
+
+
 def main() -> None:
     """Run NB05v7 end to end: dictionary -> translit columns -> channels -> union -> prune -> report."""
     t0 = time.time()
@@ -249,10 +297,80 @@ def main() -> None:
     WORK.mkdir(parents=True, exist_ok=True)
     recs_dir = kaggle_env.find_input("records_train_S1.parquet").parent
     kaggle_env.log(f"records {recs_dir}; workers {N_JOBS}")
-    metrics: dict = {"blocking_config": BC, "no_dense": True}
+    metrics: dict = {"blocking_config": BC, "no_dense": True, "resume": RESUME}
     report: dict = {"dense_source_B_test": "none"}
 
-    # ---------------- train: A and B query samples ----------------
+    if RESUME:
+        # Reuse a prior (real) run's already-completed train phase instead of
+        # rebuilding the dictionary and re-running all 11 channels over 120k
+        # train queries again -- that part succeeded cleanly last time and
+        # cost ~50 min; only the test phase needs the fix below.
+        prior = kaggle_env.find_input("translit_dict.tsv").parent
+        kaggle_env.log(f"RESUME: reusing prior train-phase output from {prior}")
+        dictionary = translit.load_dictionary(str(prior / "translit_dict.tsv"))
+        metrics["translit_dict_size"] = len(dictionary)
+        import lightgbm as lgb
+
+        model = lgb.Booster(model_file=str(prior / "pruner.txt"))
+        model.save_model(str(WORK / "pruner.txt"))
+        report.update(json.loads((prior / "blocking_report.json").read_text(encoding="utf-8")))
+        for h in ("A", "B"):
+            src = prior / f"cands_{h}.parquet"
+            (WORK / f"cands_{h}.parquet").write_bytes(src.read_bytes())
+        kaggle_env.log(f"  reused: dictionary {len(dictionary):,} entries, cands_A/B copied through, "
+                       f"prior B pair_recall {report.get('B', {}).get('ALL', {}).get('pair_recall')}")
+        kaggle_env.write_json(report, WORK / "blocking_report.json")
+        kaggle_env.write_json(metrics, WORK / "metrics.json")
+    else:
+        _run_train_phase(recs_dir, metrics, report)
+        dictionary = _TRAIN_STATE["dictionary"]
+        model = _TRAIN_STATE["model"]
+
+    # ---------------- test: all S1, pruned per country to bound memory ----------------
+    s1, pool = load_split(recs_dir, "test")
+    kaggle_env.log("STEP1a: applying translit to test S1 + pool")
+    t_app = time.time()
+    translit.add_translit_columns(s1, dictionary, n_jobs=N_JOBS)
+    translit.add_translit_columns(pool, dictionary, n_jobs=N_JOBS)
+    metrics["translit_apply_test_s"] = round(time.time() - t_app, 1)
+    s1_cty = s1["country"].to_numpy()
+    per_country = {}
+    cand_files = []
+    for c in sorted(set(s1_cty.tolist())):
+        qr = np.flatnonzero(s1_cty == c).astype(np.int32)
+        kaggle_env.log(f"test {c!r}: {len(qr):,} S1 queries (isolated subprocess)")
+        out_path = WORK / f"cands_test_{c}.parquet"
+        per_country[c] = run_country_isolated(c, s1, pool, qr, model, out_path)
+        cand_files.append(out_path)
+        kaggle_env.log(f"  {c!r} done: {per_country[c]}")
+        gc.collect()
+    cands = pd.concat([pd.read_parquet(f) for f in cand_files], ignore_index=True)
+    assert cands["s1_id"].nunique() <= len(s1)
+    assert not cands.duplicated(["s1_id", "cand_id"]).any()
+    cands.to_parquet(WORK / "cands_test.parquet", index=False, compression="zstd")
+    for f in cand_files:
+        f.unlink()
+        f.with_suffix(".stats.json").unlink()
+    report["test"] = per_country
+    kaggle_env.write_json(report, WORK / "blocking_report.json")
+    metrics["test"] = per_country
+    metrics["runtime_s"] = round(time.time() - t0, 1)
+    kaggle_env.write_json(metrics, WORK / "metrics.json")
+    kaggle_env.log(f"done in {metrics['runtime_s']}s")
+
+
+_TRAIN_STATE: dict = {}
+
+
+def _run_train_phase(recs_dir, metrics: dict, report: dict) -> None:
+    """The original (non-RESUME) train phase: dictionary -> channels -> union -> prune -> cands_A/B.
+
+    Leaves its results in the module-level `_TRAIN_STATE` dict (`dictionary`,
+    `model`) for `main()` to pick up, since this needs to slot into the same
+    place the inline code used to occupy without changing `main()`'s overall
+    shape more than necessary.
+    """
+    t0 = time.time()
     s1, pool = load_split(recs_dir, "train")
     pairs = pd.read_parquet(recs_dir / "gt.parquet")
     sp1 = pd.read_parquet(recs_dir / "split_s1.parquet").set_index("entity_id")
@@ -327,37 +445,9 @@ def main() -> None:
     kaggle_env.write_json(report, WORK / "blocking_report.json")
     del unions, u, ua, s1, pool, pairs, sp1
     gc.collect()
-
-    # ---------------- test: all S1, pruned per country to bound memory ----------------
-    s1, pool = load_split(recs_dir, "test")
-    kaggle_env.log("STEP1a: applying translit to test S1 + pool")
-    t_app = time.time()
-    translit.add_translit_columns(s1, dictionary, n_jobs=N_JOBS)
-    translit.add_translit_columns(pool, dictionary, n_jobs=N_JOBS)
-    metrics["translit_apply_test_s"] = round(time.time() - t_app, 1)
-    s1_cty = s1["country"].to_numpy()
-    outs, per_country = [], {}
-    for c in sorted(set(s1_cty.tolist())):
-        qr = np.flatnonzero(s1_cty == c).astype(np.int32)
-        kaggle_env.log(f"test {c!r}: {len(qr):,} S1 queries")
-        pr = build_candidates("test", s1, pool, qr, model=model)
-        cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
-        per_country[c] = {"n_s1": int(len(qr)), "union_per_s1_mean": round(pr.attrs["n_union"] / len(qr), 2),
-                          "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
-                          "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
-        outs.append(to_cands(pr, s1, pool))
-        del pr
-        gc.collect()
-    cands = pd.concat(outs, ignore_index=True)
-    assert cands["s1_id"].nunique() <= len(s1)
-    assert not cands.duplicated(["s1_id", "cand_id"]).any()
-    cands.to_parquet(WORK / "cands_test.parquet", index=False, compression="zstd")
-    report["test"] = per_country
-    kaggle_env.write_json(report, WORK / "blocking_report.json")
-    metrics["test"] = per_country
-    metrics["runtime_s"] = round(time.time() - t0, 1)
-    kaggle_env.write_json(metrics, WORK / "metrics.json")
-    kaggle_env.log(f"done in {metrics['runtime_s']}s")
+    metrics["train_phase_runtime_s"] = round(time.time() - t0, 1)
+    _TRAIN_STATE["dictionary"] = dictionary
+    _TRAIN_STATE["model"] = model
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "translit", "blocking"],
+  "driver": "../nb05v7_translit/driver.py",
+  "output": "nb05v7_translit_resume.py",
+  "config": true,
+  "defines": {"RESUME": true}
+}

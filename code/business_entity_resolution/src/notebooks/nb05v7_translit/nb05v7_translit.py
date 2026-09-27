@@ -298,40 +298,64 @@ def _ensure_anyascii() -> None:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "anyascii==0.3.3"], check=True)
 
 
-def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, model, out_path) -> dict:
-    """Run `build_candidates` for one test country in a forked child process; return its stats.
+def _prune_union_chunked(u: pd.DataFrame, model, chunk_s1: int) -> pd.DataFrame:
+    """Score + prune an already-built union frame in S1-sized slices (bounds memory for huge countries).
 
-    The second real Kaggle run got through France cleanly, then France->India->US
-    died partway through India's channels ("Killed", OOM) even though each
-    channel's own transient memory is freed (`gc.collect()`) after it completes --
-    RSS still climbed across ~10 sequential large sparse-matrix operations for
-    one huge country (809,986 queries x 4.7M pool) before the union/prune step
-    that already bounds memory even got a chance to run. Freed Python memory
-    isn't always returned to the OS immediately (allocator fragmentation), so a
-    long in-process sequence of big allocations can still OOM a process that
-    would be fine doing the same work fresh. Isolating each country in its own
-    forked child (Linux copy-on-write: no pickling of s1/pool, no real cost to
-    fork) makes that moot -- the OS reclaims everything the instant the child
-    exits, so the parent always starts each country from a clean slate.
+    `union_channels` builds `u` from `np.unique` of int64 keys `q_row * n_pool
+    + p_row`, so `u` is already sorted by `q_row` (then `p_row`) -- slice
+    boundaries can be found with `searchsorted` instead of a boolean mask.
+    """
+    q = u["q_row"].to_numpy()
+    uniq_q = np.unique(q)
+    out = []
+    for s in range(0, len(uniq_q), chunk_s1):
+        lo, hi = uniq_q[s], uniq_q[min(s + chunk_s1, len(uniq_q)) - 1]
+        a, b = np.searchsorted(q, lo, side="left"), np.searchsorted(q, hi, side="right")
+        sub = u.iloc[a:b]
+        score = model.predict(sub[blocking.PRUNE_FEATURES].to_numpy(np.float32), num_threads=N_JOBS)
+        out.append(blocking.prune(sub, score, BC["prune_top"]))
+    return pd.concat(out, ignore_index=True) if out else u.iloc[:0]
+
+
+def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, model, out_path) -> dict:
+    """Build one test country's candidates: channels+union in a forked child, prune in the parent.
+
+    Two distinct failures were hit here on real Kaggle runs, in order:
+    1. (OOM) France->India->US died partway through India's channels even
+       though each channel's own transient memory is freed (`gc.collect()`)
+       after it completes -- RSS still climbed across ~10 sequential large
+       sparse-matrix operations for one huge country (809,986 queries x 4.7M
+       pool) before Python's allocator returned anything to the OS. Fixed by
+       running the channel+union computation for each country in a forked
+       child (Linux copy-on-write: no pickling of s1/pool) that exits when
+       done, so the OS reclaims everything and the next country starts clean.
+    2. (SIGSEGV, exit 139) Fixing #1 by forking around the WHOLE
+       `build_candidates` call (channels + `model.predict` for pruning)
+       crashed instead: LightGBM's `predict()` uses OpenMP internally, and
+       forking a process after a native threaded library has already
+       initialised its thread pool leaves the child with an invalid copy of
+       it -- a well-known fork/threading hazard, not a memory issue. The
+       channels themselves (pure numpy/scipy) survived the fork fine; the
+       crash traced to the `model.predict` call specifically. Fixed by moving
+       the fork boundary: the child does ONLY channels + union (no LightGBM
+       call at all, proven safe by #1's fix), writes the unpruned union to a
+       temp parquet, and the (never-forked, stable) parent reloads it and
+       runs `model.predict` + prune itself, chunked by S1 to keep peak
+       memory in the parent bounded too.
 
     Inputs: country - label (report key only); s1, pool - test record frames
             (read-only, shared via fork, never pickled); qr - this country's S1
-            row ids; model - the pruner Booster; out_path - Path to write the
-            country's `to_cands` parquet to.
+            row ids; model - the pruner Booster (only ever used in the parent);
+            out_path - Path to write the country's final `to_cands` parquet to.
     Outputs: stats dict (n_s1, union_per_s1_mean, cands_per_s1_mean/p95,
-    share_s1_zero_cands), also written to `out_path` with a `.stats.json` suffix.
+    share_s1_zero_cands).
     """
-    stats_path = out_path.with_suffix(".stats.json")
+    tmp_union = out_path.with_suffix(".union.parquet")
     pid = os.fork()
-    if pid == 0:  # child: do the heavy work, write results, exit -- never returns
+    if pid == 0:  # child: channels + union ONLY (no LightGBM), write, exit -- never returns
         try:
-            pr = build_candidates("test", s1, pool, qr, model=model)
-            cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
-            stats = {"n_s1": int(len(qr)), "union_per_s1_mean": round(pr.attrs["n_union"] / len(qr), 2),
-                     "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
-                     "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
-            to_cands(pr, s1, pool).to_parquet(out_path, index=False, compression="zstd")
-            stats_path.write_text(json.dumps(stats), encoding="utf-8")
+            u = build_candidates("test", s1, pool, qr, model=None)
+            u.to_parquet(tmp_union, index=False, compression="zstd")
             os._exit(0)
         except Exception:
             import traceback
@@ -340,8 +364,22 @@ def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr:
             os._exit(1)
     _, status = os.waitpid(pid, 0)
     if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-        raise RuntimeError(f"country {country!r} subprocess failed (status {status})")
-    return json.loads(stats_path.read_text(encoding="utf-8"))
+        raise RuntimeError(f"country {country!r} channel/union subprocess failed (status {status})")
+
+    u = pd.read_parquet(tmp_union)
+    n_union = len(u)
+    pr = _prune_union_chunked(u, model, CHUNK_S1)
+    del u
+    gc.collect()
+    tmp_union.unlink()
+    cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
+    stats = {"n_s1": int(len(qr)), "union_per_s1_mean": round(n_union / len(qr), 2),
+             "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
+             "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
+    to_cands(pr, s1, pool).to_parquet(out_path, index=False, compression="zstd")
+    del pr
+    gc.collect()
+    return stats
 
 
 def main() -> None:
@@ -405,7 +443,6 @@ def main() -> None:
     cands.to_parquet(WORK / "cands_test.parquet", index=False, compression="zstd")
     for f in cand_files:
         f.unlink()
-        f.with_suffix(".stats.json").unlink()
     report["test"] = per_country
     kaggle_env.write_json(report, WORK / "blocking_report.json")
     metrics["test"] = per_country

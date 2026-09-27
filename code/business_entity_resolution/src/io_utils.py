@@ -143,6 +143,28 @@ def iter_parquet_compact(path: str | Path, batch_rows: int, columns: list[str] |
         yield rb.to_pandas(types_mapper=_arrow_strings)
 
 
+def pairs_to_lists(s1_ids, cand_ids) -> dict[str, list[str]]:
+    """{s1_id: sorted unique candidate IDs} from two aligned ID sequences.
+
+    Vectorised (factorize + lexsort), no pandas groupby-to-list: aggregating to
+    Python lists fails on Arrow-backed string columns in pandas 2.2 (NB09a v1 crash).
+    """
+    import numpy as np
+
+    s_codes, s_uni = pd.factorize(np.asarray(s1_ids, dtype=object))
+    c_codes, c_uni = pd.factorize(np.asarray(cand_ids, dtype=object), sort=True)
+    if not len(s_codes):
+        return {}
+    order = np.lexsort((c_codes, s_codes))
+    sc, cc = s_codes[order], c_codes[order]
+    keep = np.r_[True, (sc[1:] != sc[:-1]) | (cc[1:] != cc[:-1])]  # drop duplicate pairs
+    sc, cc = sc[keep], cc[keep]
+    starts = np.flatnonzero(np.r_[True, sc[1:] != sc[:-1]])
+    ends = np.r_[starts[1:], len(sc)]
+    names = c_uni.astype(object)
+    return {str(s_uni[sc[a_]]): [str(x) for x in names[cc[a_:b_]]] for a_, b_ in zip(starts, ends)}
+
+
 def load_config(path: str | Path) -> dict:
     """Load a YAML config file.
 

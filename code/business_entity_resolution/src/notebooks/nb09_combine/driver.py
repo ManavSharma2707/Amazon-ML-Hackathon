@@ -269,8 +269,7 @@ def write_outputs(test_ids, cands, pred):
     OUT.mkdir(parents=True, exist_ok=True)
     for name, frame, header in (("candidate_pairs.tsv", cands, ("source1_entity_id", "candidate_entity_ids")),
                                 ("matching_results.tsv", pred, ("source1_entity_id", "matched_entity_ids"))):
-        lists = frame.groupby("s1_id")["cand_id"].agg(lambda s: sorted(set(s.tolist())))
-        lists = dict(zip(lists.index.tolist(), lists.tolist()))
+        lists = io_utils.pairs_to_lists(frame["s1_id"].tolist(), frame["cand_id"].tolist())
         io_utils.write_id_list_tsv(OUT / name, ((s, lists.get(s, [])) for s in test_ids), header=header)
 
 

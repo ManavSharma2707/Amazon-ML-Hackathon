@@ -82,3 +82,16 @@ def test_write_id_list_tsv_empty_field_and_format(tmp_path):
     assert lines[1] == "S1-1\tS2-1,S3-2"
     assert lines[2] == "S1-2\t"
     assert "\r" not in text
+
+
+def test_pairs_to_lists_arrow_and_dupes():
+    """Sorted unique IDs per S1, also for Arrow-backed string columns (NB09a v1 crash)."""
+    import pandas as pd
+
+    from src import io_utils
+
+    df = pd.DataFrame({"s1_id": ["S1-2", "S1-1", "S1-2", "S1-2"], "cand_id": ["S3-9", "S2-5", "S2-1", "S3-9"]})
+    df = df.astype("string[pyarrow]")
+    out = io_utils.pairs_to_lists(df["s1_id"].tolist(), df["cand_id"].tolist())
+    assert out == {"S1-2": ["S2-1", "S3-9"], "S1-1": ["S2-5"]}
+    assert io_utils.pairs_to_lists([], []) == {}

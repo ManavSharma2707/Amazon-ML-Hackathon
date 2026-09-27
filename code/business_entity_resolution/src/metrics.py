@@ -141,9 +141,11 @@ def error_buckets(pred, truth, cands, s1_ids, name_sim=None, number_conflict=Non
     import numpy as np
     import pandas as pd
 
-    ids = pd.Index(pd.unique(np.asarray(list(s1_ids))))
-    t = truth[truth["s1_id"].isin(ids)].rename(columns={"match_id": "cand_id"})
-    pr = pred[pred["s1_id"].isin(ids)][["s1_id", "cand_id"]]
+    ids = pd.Index(pd.unique(np.asarray(list(s1_ids), dtype=object)))
+    # plain object columns: pandas 2.2 cannot aggregate Arrow-backed strings into Python sets
+    obj = lambda d, cols: pd.DataFrame({c: np.asarray(d[c], dtype=object) for c in cols})
+    t = obj(truth[truth["s1_id"].isin(ids)], ["s1_id", "match_id"]).rename(columns={"match_id": "cand_id"})
+    pr = obj(pred[pred["s1_id"].isin(ids)], ["s1_id", "cand_id"])
     key = lambda d: d["s1_id"].astype(str) + "|" + d["cand_id"].astype(str)
     tk, pk, ck = set(key(t)), set(key(pr)), set(key(cands))
     fp = pr[~key(pr).isin(tk)]
@@ -155,7 +157,7 @@ def error_buckets(pred, truth, cands, s1_ids, name_sim=None, number_conflict=Non
     n_blk = fn_block.groupby("s1_id").size().reindex(ids, fill_value=0)
     wrong = (n_fp > 0) | (n_fn > 0)
     # records predicted for a different S1 than the one being judged
-    owner = pr.groupby("cand_id")["s1_id"].agg(lambda s: set(s))
+    owner = pr.groupby("cand_id")["s1_id"].agg(lambda s: set(s.tolist()))
     def claimed_elsewhere(d):
         o = d["cand_id"].map(owner)
         return np.array([isinstance(x, set) and bool(x - {s}) for x, s in zip(o, d["s1_id"])], dtype=bool)

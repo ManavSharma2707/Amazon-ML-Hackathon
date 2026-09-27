@@ -8,8 +8,8 @@
   "enable_gpu": "false",
   "enable_tpu": "false",
   "enable_internet": "true",
-  "dataset_sources": [],
+  "dataset_sources": ["PLACEHOLDER/er-nb05v7-translit-partial"],
   "competition_sources": [],
-  "kernel_sources": ["PLACEHOLDER/er-nb02-normalize", "PLACEHOLDER/er-nb05v7-translit"],
+  "kernel_sources": ["PLACEHOLDER/er-nb02-normalize"],
   "model_sources": []
 }

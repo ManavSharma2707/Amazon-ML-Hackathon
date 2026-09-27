@@ -84,7 +84,8 @@ judge:
   time_budget_min: 45
   order_swap_tta: true
   train_n: 20000          # judge training prompts from the A OOF band (plan SS16.4: 12k-20k)
-  train_budget_min: 150   # QLoRA training wall-clock cap (NB07 total <= 3 h)
+  train_budget_min: 70    # QLoRA training cap; cut from 150 on 27 Sep 11:00 IST to fit the 16:30 hard stop
+  infer_budget_min: 60    # NB08 scoring budget for B + test together
   infer_cap_B: 60000      # band pairs prepared for NB08 (most uncertain first)
   infer_cap_test: 200000
 

@@ -188,30 +188,32 @@ Ask the organisers through the official **Google Form** linked in the guidelines
 
 ## 11. Submission compatibility checklist (verified against the problem statement and official guidelines, 2026-09-26)
 
+**Walked item by item 2026-09-27 ~17:00 IST against `submission_package/TEAM_NAME_PLACEHOLDER_submission.zip`** (243 MB, 136 files; team-name placeholder still unfilled, see SUBMISSION_READY.md). Evidence for each item below.
+
 **Leaderboard file (`matching_results.tsv`, uploaded on Unstop):**
-- [ ] Tab-separated; header exactly `source1_entity_id<TAB>matched_entity_ids`
-- [ ] Exactly one row per test S1 entity, **France included**; no duplicate rows
-- [ ] ID lists comma-separated, no spaces, no quotes, no duplicates; only `S2-`/`S3-` IDs that exist in the test set
-- [ ] Empty field for predicted singletons
-- [ ] Official validator prints PASS
-- [ ] Counts toward the 5/day cap → logged in `progress.md` with the git commit hash
+- [x] Tab-separated; header exactly `source1_entity_id<TAB>matched_entity_ids` — read directly from the zip: `b'source1_entity_id\tmatched_entity_ids\n'`
+- [x] Exactly one row per test S1 entity, **France included**; no duplicate rows — streamed the zipped file: 1,732,544 rows, 1,732,544 unique S1 IDs, 0 duplicates (matches EDA E1/E12's test S1 count exactly, France's 259,452 among them)
+- [x] ID lists comma-separated, no spaces, no quotes, no duplicates; only `S2-`/`S3-` IDs that exist in the test set — `check_outputs.py` PASS (streamed, incl. the ID-existence check) both locally and inside the NB09a Kaggle kernel; official validator run with `--check-ids` inside the kernel also PASS
+- [x] Empty field for predicted singletons — `io_utils.write_id_list_tsv` writes an empty field, not `"None"`/`"[]"`; validator's own row parser (which would flag a malformed empty-list encoding) passed
+- [x] Official validator prints PASS — ran locally (`utils/validate_submission.py --check-ids`) at 11:49 IST: `PASS — no blocking issues found. Safe to submit.`; also PASS inside the NB09a v2/v3 Kaggle kernels (`validation.official_validator_returncode: 0`, `reports/raw/nb09a_v2/metrics.json` and `..._v3/metrics.json`). A third local rerun on the zip's own extracted copy hit a `MemoryError` on this now heavily loaded laptop (256 MB-1.4 GB free at the time) — not re-run a second time given disk risk; instead the zip's two TSVs were proven **byte-identical** (streamed MD5 from inside the zip, no extraction) to the exact files the validator already passed: `829b3567ed9811c37a14cb897b87f82c` / `eef8f7cdeef91b5b4ada4401e90770be`
+- [x] Counts toward the 5/day cap → logged in `progress.md` with the git commit hash — sub-01 logged in the Submissions log with commit `698bd24`
 
 **Candidate file (`candidate_pairs.tsv`, in the zip):**
-- [ ] Header exactly `source1_entity_id<TAB>candidate_entity_ids`; same row rules
-- [ ] Equals the **exact set the final model scores** (the last filtering stage)
-- [ ] Every matched ID appears in that entity's candidate list
+- [x] Header exactly `source1_entity_id<TAB>candidate_entity_ids`; same row rules — read directly from the zip: `b'source1_entity_id\tcandidate_entity_ids\n'`; same 1,732,544/1,732,544/0 row-count check as above
+- [x] Equals the **exact set the final model scores** (the last filtering stage) — `output/candidate_pairs.tsv` is written from `p1t`/`cands`, the same frame `stage1.predict` and the decoder scored, by construction (`write_outputs` in NB09a/predict.py never has a separate candidate source)
+- [x] Every matched ID appears in that entity's candidate list — `check_outputs.check_outputs` asserts this explicitly; PASS (see above)
 
 **Zip `<team_name>_submission.zip`:**
-- [ ] `output/matching_results.tsv` + `output/candidate_pairs.tsv`
-- [ ] `code/business_entity_resolution/src/` (all code, incl. configs, scripts, notebooks), `README.md`, `requirements.txt` (pinned)
-- [ ] `Documentation_template.md` at the zip root (filled; .md or .pdf)
-- [ ] README: exact commands data → blocking → matching → output, hardware, runtimes, base-model IDs and licences, "no external data" and "offline inference" statements
-- [ ] Code has docstrings/comments on every function (guidelines requirement)
-- [ ] Does **not** include: the dataset, our context files (`CLAUDE.md`, `memory.md`, `progress.md`, `architecture.md`), secrets, large model weights
+- [x] `output/matching_results.tsv` + `output/candidate_pairs.tsv` — present, `unzip -l` confirmed
+- [x] `code/business_entity_resolution/src/` (all code, incl. configs, scripts, notebooks), `README.md`, `requirements.txt` (pinned) — present, 136 files total; `src/configs/default.yaml`, `src/scripts/{run_train,run_predict,make_doc_tables}`, all `src/notebooks/*` bundles included
+- [x] `Documentation_template.md` at the zip root (filled; .md) — present, filled with real numbers from `make_doc_tables.py`
+- [x] README: exact commands data → blocking → matching → output, hardware, runtimes, base-model IDs and licences, "no external data" and "offline inference" statements — all present in `README.md`'s "How this was actually run" table (measured runtimes) and Licences section
+- [x] Code has docstrings/comments on every function (guidelines requirement) — an AST walk over every `src/*.py`, `src/notebooks/*/driver.py` and `src/scripts/*.py` function/class found 0 missing docstrings (5 found and fixed this session, commit `d5cc5a3`)
+- [x] Does **not** include: the dataset, our context files (`CLAUDE.md`, `memory.md`, `progress.md`, `architecture.md`), secrets, large model weights — confirmed via `zipfile.namelist()`: no `CLAUDE.md`/`memory.md`/`progress.md`/`architecture.md`, no `student_resource`/dataset path, no `kaggle.json`/token; largest file is `artifacts/stage1_model.txt` at 11.6 MB (a small LightGBM text model — the trained artifact needed for `--from-features` reproducibility, not the multi-GB weights this rule targets; a deliberate, documented choice, see SUBMISSION_READY.md)
 
 **Rules:**
-- [ ] Models MIT/Apache-2.0, ≤ 8B (Qwen3-Embedding-0.6B, Qwen3-4B, LightGBM)
-- [ ] No external lookups; models run locally; inference works with internet OFF
-- [ ] Nothing trained on test data
-- [ ] No hard-coded country values
+- [x] Models MIT/Apache-2.0, ≤ 8B (Qwen3-Embedding-0.6B, Qwen3-4B, LightGBM) — licences verified from the actual model cards in NB00 (`LICENSES.md`, both runners); only LightGBM (MIT) is on the shipped inference path (README.md's "What is, and is not, in the shipped inference path")
+- [x] No external lookups; models run locally; inference works with internet OFF — every Kaggle notebook after NB00 runs with `enable_internet: false` (confirmed in every `kernel-metadata.json`); no API/network calls anywhere in `src/`
+- [x] Nothing trained on test data — stage-1/pruner/calibrator are trained on Half A / Half B only (train split); test predictions were used only for the format/empty-rate sanity checks in NB09a's `metrics.json`, never for tuning
+- [x] No hard-coded country values — the only country-derived feature is `same_country` (grep across `src/*.py` for a literal country string in feature code found none); blocking's `within_country` flag is equality-based, set from EDA E5, never a value
 - [ ] 1–2-page approach document ready

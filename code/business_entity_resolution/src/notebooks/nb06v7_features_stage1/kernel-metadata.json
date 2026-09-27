@@ -1,0 +1,16 @@
+{
+  "id": "PLACEHOLDER/er-nb06v7-features-stage1",
+  "title": "er-nb06v7-features-stage1",
+  "code_file": "nb06v7_features_stage1.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "machine_shape": "",
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": ["PLACEHOLDER/er-nb02-normalize", "PLACEHOLDER/er-nb05v7-translit", "PLACEHOLDER/nb00-download-models"],
+  "model_sources": []
+}

@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features_v7", "stage1"],
+  "driver": "../nb06v7_features_stage1/driver.py",
+  "output": "nb06v7_features_stage1_dry.py",
+  "config": true,
+  "defines": {"DRY_RUN": true}
+}

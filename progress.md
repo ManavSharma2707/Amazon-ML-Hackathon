@@ -7,15 +7,17 @@
 
 ## Autonomous run state (PROMPT FINAL)
 
-- **Updated:** 2026-09-27 04:40 IST
-- **Stage:** S0 -> S1 (no submission yet: sub-01 pending NB06 -> NB09a)
+- **Updated:** 2026-09-27 06:25 IST
+- **Stage:** S0/S1 — still no submission: sub-01 waits on NB06 v1 -> NB09a
 - **Iteration #:** 0
-- **Current best config:** none yet (sub-01 = stage-1 + isotonic + decoder/threshold, NB09a)
-- **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / —
-- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:15 IST, on NB05 v4 or v5); er-nb05-blocking-sparse v6 (R1, pushed 04:40 IST, ~2 h)
-- **Done:** er-nb07-judge-train-dry v1 (R2) COMPLETE 03:35 IST (dry run clean; 3.2 s/step at 4 ex/step)
-- **Next action:** NB06 done -> push NB09a + NB06b (R1); fetch TSVs -> checks -> tag sub-01 -> UPLOAD READY; relay judge inputs -> NB07 full (R2); meanwhile write collective.py / combiner.py / NB09
-- **Uploads used today (27 Sep):** 0 (assumed — not reported by the user)
+- **Current best config:** none measured yet
+- **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / — ; blocking B pair recall 0.9736 (v6)
+- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:17 IST; on NB05 v4 or v5 — check metrics.nb05_has_cross_pair)
+- **Done:** NB05 v5 (0.9733), NB05 v6 (0.9736, latest output = v6); NB07 dry run (R2) clean
+- **Ready, not pushed:** NB09a (sub-01), NB06b (judge inputs), NB09 (combiner), NB07 full, NB08; NB06 v2 (cross-fitted pre-ranker, v6 candidates) — push only after NB06 v1 ends
+- **Next action:** NB06 v1 done -> fetch metrics -> push NB09a + NB06b; then NB06 v2 on v6 -> NB09 (safety #2)
+- **Uploads used today (27 Sep):** 0 (assumed)
+- **Peer sessions:** amazon-hackathon-0c / -6c asked (04:40) not to push/commit
 
 ## Current focus
 

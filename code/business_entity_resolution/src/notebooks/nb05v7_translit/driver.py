@@ -39,7 +39,15 @@ import pandas as pd
 
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
-BC = CONFIG["blocking"]
+BC = dict(CONFIG["blocking"])
+# Time-box override (this notebook only, not the shared config -- v6's already-shipped
+# blocking_report/candidates are unaffected): the real v2 Kaggle run measured ~51 min for
+# the 11-channel pass at 500k combined train queries, which alone was most of a ~1h budget
+# before test (1.73M queries, no way to shrink) still has to run. Cutting the train query
+# sample 250k/half -> 60k/half trades some pruner-training statistical power (still ample:
+# train_pruner further subsamples to <= 3M pairs regardless) for a shot at finishing before
+# the 20:45 IST V7 gate. See memory.md.
+BC["train_sample_per_half"] = 60_000
 CHUNK_S1 = int(os.environ.get("ER_CHUNK_S1", 200_000))  # S1 rows per union/feature/prune chunk (memory bound)
 COLS = ["entity_id", "country", "raw_name", "raw_addr", "norm_name", "fold_name", "norm_addr", "fold_addr", "house_number"]
 

@@ -7,14 +7,15 @@
 
 ## Autonomous run state (PROMPT FINAL)
 
-- **Updated:** 2026-09-27 06:25 IST
+- **Updated:** 2026-09-27 10:58 IST
 - **Stage:** S0/S1 — still no submission: sub-01 waits on NB06 v1 -> NB09a
 - **Iteration #:** 0
 - **Current best config:** none measured yet
 - **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / — ; blocking B pair recall 0.9736 (v6)
-- **Running notebooks:** er-nb06-features-stage1 v1 (R1, pushed ~03:17 IST; on NB05 v4 or v5 — check metrics.nb05_has_cross_pair)
+- **Running notebooks (R1, pushed 10:57 IST):** er-nb09a-decode-submit v1 (sub-01), er-nb06b-judge-data v1, er-nb09-combine v1 (safety #2 candidate)
+- **NB06 v1 COMPLETE** (~08:15 IST, 17,881 s, on NB05 **v4** candidates): stage-1 AUC B 0.99961 / A OOF 0.99959; pre-rank top-20 recall 0.9585 -> 0.9576; stage-1 hit the 1500-round cap. Background poller notification arrived only at 10:53 (~2.5 h lost); now polling in the foreground
 - **Done:** NB05 v5 (0.9733), NB05 v6 (0.9736, latest output = v6); NB07 dry run (R2) clean
-- **Ready, not pushed:** NB09a (sub-01), NB06b (judge inputs), NB09 (combiner), NB07 full, NB08; NB06 v2 (cross-fitted pre-ranker, v6 candidates) — push only after NB06 v1 ends
+- **Ready, not pushed:** NB07 full, NB08 (after NB06b relay). **NB06 v2 dropped:** a 5 h rerun on v6 candidates cannot finish + feed NB09 before the 16:30 hard stop
 - **Next action:** NB06 v1 done -> fetch metrics -> push NB09a + NB06b; then NB06 v2 on v6 -> NB09 (safety #2)
 - **Uploads used today (27 Sep):** 0 (assumed)
 - **Peer sessions:** amazon-hackathon-0c / -6c asked (04:40) not to push/commit

@@ -99,6 +99,7 @@
 | 2026-09-27 04:05 IST | **Combiner uses within-entity + sibling collective features but NOT cross-entity competition counts/margins** (plan SS17.1) | Half B queries only ~11-18% of train S1s while test has all S1s competing: claimant counts would shift train->test and LOCO cannot see it; cross-entity conflicts go to the one-owner rule |
 | 2026-09-27 04:05 IST | **Combiner re-scores only pairs with stage-1 p >= 0.001 (p_floor); others keep p1, identically on test** | LightGBM time on ~5M B rows; true pairs below the floor are reported in NB09 metrics |
 | 2026-09-27 04:10 IST | **Judge inference (NB08) scores B and test in one queue, most uncertain first, and cuts both at the same depth abs(p1 - 0.5)** | `judge_scored` must mean the same thing in the combiner's training data (B) and on test |
+| 2026-09-27 10:58 IST | **Final features/stage-1 = NB06 v1 on NB05 v4 candidates (B pair recall 0.9585 -> 0.9576 after top-20 pre-rank); NB06 v2 on v5/v6 candidates (0.9736) dropped** | NB06 takes ~5 h on Kaggle CPU (35M test pairs x ~0.5 ms); not enough time before the 16:30 hard stop to rerun it and the combiner |
 
 ## 6. EDA findings (fill in during Step 1)
 
@@ -167,6 +168,8 @@ Run 2026-09-26 ~21:37 IST on Kaggle CPU kernel `nb01-eda` (R1), full train+test 
 - **86M-row candidate tables as pandas object strings need ~11 GB**: read Parquet with Arrow-backed strings (`io_utils.read_parquet_compact`) and stream test candidates in whole-S1 batches.
 - **Original check_outputs loaded all test S2/S3 IDs + per-S1 Python sets (GBs)**: rewritten to stream with int64-encoded IDs (fine on the 8 GB laptop).
 - **Qwen3-4B QLoRA on one T4 (dry run): 3.2 s per 4-example step; prompts ~291 tokens (4.7% hit 384); "Yes"/"No" are single tokens** (reports/raw/nb07_dry_v1).
+- **Background-poller task notifications were only delivered when the user next typed** (NB06 finished ~08:15 IST, noticed 10:53). For long waits, poll in the foreground in <= 10-min tool calls instead of ending the turn.
+- **NB06 on Kaggle CPU: ~5 h** for 3M A + 5M B + 35M test full-feature pairs (0.48 ms/pair wall incl. overhead) + stage-1 5-fold at the 1500-round cap.
 
 ## 10. Open questions
 

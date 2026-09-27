@@ -131,9 +131,28 @@ def top_per_s1(c: pd.DataFrame, score: np.ndarray, top: int) -> pd.DataFrame:
     return c[c.groupby("s1_id").cumcount() < top].reset_index(drop=True)
 
 
-def run_chunks(c: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lookups: dict, pre_model, name: str):
+def s1_half(ids) -> np.ndarray:
+    """Deterministic 2-way split of S1 ids (pre-ranker cross-fitting on Half A)."""
+    return (pd.util.hash_array(np.asarray(ids, dtype=object)) % 2).astype(np.int8)
+
+
+def pre_scores(pre, ch: pd.DataFrame, xp: pd.DataFrame, cross_fit: bool) -> np.ndarray:
+    """Pre-ranker score: on Half A each S1 is scored by the model of the other half (no in-sample
+    leak into stage-1's cheap_score feature); B and test get the mean of both half models."""
+    x = xp.to_numpy(np.float32)
+    s = [stage1.predict(m, x, N_JOBS) for m in pre]
+    if not cross_fit:
+        return (s[0] + s[1]) / 2
+    h = s1_half(ch["s1_id"].to_numpy(dtype=object))
+    return np.where(h == 0, s[1], s[0])
+
+
+def run_chunks(c: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lookups: dict, pre, name: str,
+               cross_fit: bool = False, cache: dict | None = None):
     """Pre-rank (optional) and build full features chunk by chunk.
 
+    Inputs: pre - list of two half-A pre-ranker models or None; cross_fit - Half A
+            mode; cache - precomputed cheap features per chunk index (Half A).
     Outputs: (pruned candidate frame, full feature frame) aligned row by row.
     """
     cs, fs = [], []
@@ -141,9 +160,10 @@ def run_chunks(c: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lookups: d
     for ci, ch in enumerate(s1_chunks(c, CHUNK_S1)):
         t0 = time.time()
         s1s, ps = subset_records(ch, s1, pool)
-        if pre_model is not None:
-            xp = features.build_features(ch, s1s, ps, lookups, n_jobs=N_JOBS, with_py=False, log=kaggle_env.log)
-            ch = top_per_s1(ch, stage1.predict(pre_model, xp.to_numpy(np.float32), N_JOBS), PRERANK_TOP)
+        if pre is not None:
+            xp = cache.pop(ci) if cache and ci in cache else features.build_features(
+                ch, s1s, ps, lookups, n_jobs=N_JOBS, with_py=False, log=kaggle_env.log)
+            ch = top_per_s1(ch, pre_scores(pre, ch, xp, cross_fit), PRERANK_TOP)
             del xp
         f = features.build_features(ch, s1s, ps, lookups, n_jobs=N_JOBS, log=kaggle_env.log)
         cs.append(ch)
@@ -228,21 +248,25 @@ def main() -> None:
 
     # ---------------- 2. pre-ranker on A (scale guard) ----------------
     pre_model = None
+    cache_a: dict = {}
     if use_pre:
-        kaggle_env.log("training the pre-ranker on Half A (cheap features)")
-        xs, ys = [], []
-        for ch in s1_chunks(cands["A"], CHUNK_S1):
+        kaggle_env.log("training the pre-ranker on Half A (cheap features, 2-way cross-fitted)")
+        xs, ys, hs = [], [], []
+        for ci, ch in enumerate(s1_chunks(cands["A"], CHUNK_S1)):
             s1s, ps = subset_records(ch, s1, pool)
-            xs.append(features.build_features(ch, s1s, ps, lookups, n_jobs=N_JOBS, with_py=False, log=kaggle_env.log))
+            xp = features.build_features(ch, s1s, ps, lookups, n_jobs=N_JOBS, with_py=False, log=kaggle_env.log)
+            cache_a[ci] = xp
+            xs.append(xp)
             ys.append(add_labels(ch, gt))
-        # rows of cands["A"] are grouped by S1 in the same order as the chunks
-        xa = pd.concat(xs, ignore_index=True)
-        ya = np.concatenate(ys)
+            hs.append(s1_half(ch["s1_id"].to_numpy(dtype=object)))
+        xa = pd.concat(xs, ignore_index=True).to_numpy(np.float32)
+        ya, ha = np.concatenate(ys), np.concatenate(hs)
         pp = stage1.lgb_params({"lr": 0.1, "num_leaves": 31, "min_data_in_leaf": 100}, SEED)
-        pre_model = stage1.train_full(xa.to_numpy(np.float32), ya, pp, 200, features.PRERANK_FEATURES)
-        pre_model.save_model(str(WORK / "prerank.txt"))
-        metrics["prerank_gain"] = dict(zip(features.PRERANK_FEATURES, pre_model.feature_importance("gain").round(1).tolist()))
-        del xs, ys, xa, ya
+        pre_model = [stage1.train_full(xa[ha == k], ya[ha == k], pp, 200, features.PRERANK_FEATURES) for k in (0, 1)]
+        for k, m in enumerate(pre_model):
+            m.save_model(str(WORK / f"prerank_half{k}.txt"))
+        metrics["prerank_gain"] = dict(zip(features.PRERANK_FEATURES, pre_model[0].feature_importance("gain").round(1).tolist()))
+        del xs, ys, hs, xa, ya, ha
         gc.collect()
 
     # ---------------- 3. features on A and B ----------------
@@ -250,7 +274,7 @@ def main() -> None:
     for h in ("A", "B"):
         kaggle_env.log(f"features for {h}")
         c0 = cands[h]
-        c, f = run_chunks(c0, s1, pool, lookups, pre_model, h)
+        c, f = run_chunks(c0, s1, pool, lookups, pre_model, h, cross_fit=(h == "A"), cache=cache_a if h == "A" else None)
         y = add_labels(c, gt)
         pruned[h], feats[h], labels[h] = c, f, y
         metrics[f"cands_{h}"] = {"n_s1": int(c["s1_id"].nunique()), "n_pairs": int(len(c)),

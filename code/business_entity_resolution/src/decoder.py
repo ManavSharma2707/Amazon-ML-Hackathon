@@ -174,6 +174,31 @@ class Isotonic:
         x = np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-6)))
         return self.model.predict_proba(x[:, None])[:, 1]
 
+    def save(self, path) -> None:
+        """Persist as (x, y) breakpoints (isotonic) so `load_isotonic` can reproduce predictions with
+        only NumPy — no sklearn version/pickle dependency at inference time (plan SS26, reproducibility)."""
+        if self.kind != "isotonic":
+            raise NotImplementedError("only the isotonic calibrator is persisted (it is the one actually used)")
+        np.savez(path, x=self.model.X_thresholds_, y=self.model.y_thresholds_)
+
+
+class SavedIsotonic:
+    """Isotonic calibrator reconstructed from saved breakpoints (np.interp only, no sklearn needed)."""
+
+    def __init__(self, x: np.ndarray, y: np.ndarray):
+        """x, y: monotone breakpoints from `Isotonic.save`."""
+        self.x, self.y = x, y
+
+    def predict(self, p: np.ndarray) -> np.ndarray:
+        """Calibrated probabilities via linear interpolation between breakpoints (clipped at the ends)."""
+        return np.interp(p, self.x, self.y).astype(np.float64)
+
+
+def load_isotonic(path) -> "SavedIsotonic":
+    """Load a calibrator saved by `Isotonic.save`."""
+    z = np.load(path)
+    return SavedIsotonic(z["x"], z["y"])
+
 
 def ece(p: np.ndarray, y: np.ndarray, bins: int = 15) -> float:
     """Expected calibration error with equal-width bins."""

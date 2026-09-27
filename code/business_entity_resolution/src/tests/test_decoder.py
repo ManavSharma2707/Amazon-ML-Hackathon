@@ -81,3 +81,16 @@ def test_isotonic_and_sharpen():
     c = decoder.Isotonic().fit(p, y).predict(np.linspace(0, 1, 50))
     assert (np.diff(c) >= -1e-12).all()
     assert np.allclose(decoder.sharpen(p, 1.0), p)
+
+
+def test_isotonic_save_load_roundtrip(tmp_path):
+    """A calibrator saved to disk and reloaded (NumPy only, no sklearn) reproduces the same predictions."""
+    rng = np.random.default_rng(1)
+    p = rng.random(5000)
+    y = (rng.random(5000) < p ** 1.5).astype(int)
+    cal = decoder.Isotonic().fit(p, y)
+    path = tmp_path / "calibrator.npz"
+    cal.save(path)
+    loaded = decoder.load_isotonic(path)
+    query = np.linspace(0, 1, 200)
+    assert np.allclose(cal.predict(query), loaded.predict(query), atol=1e-9)

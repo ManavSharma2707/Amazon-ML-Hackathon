@@ -17,6 +17,8 @@ Inputs (globbed under /kaggle/input):
 
 Outputs in /kaggle/working:
 - output/matching_results.tsv, output/candidate_pairs.tsv (candidates = exactly the scored test set)
+- artifacts/calibrator.npz, final_config.json, stage1_model.txt, prerank_half{0,1}.txt (the trained/fitted
+  pieces needed to reproduce this exact submission from saved features; see src/predict.py)
 - metrics.json (B F0.5 overall / per country vs floor, grid, LOCO-lite, scrambled drop, validator results)
 """
 
@@ -272,6 +274,18 @@ def main() -> None:
 
     # ---------------- final calibrator on all of B ----------------
     cal = decoder.Isotonic().fit(p1b["p1"].to_numpy(), p1b["label"].to_numpy())
+
+    # ---------------- persist the final artifacts (reproducibility: predict.py / NB11) ----------------
+    art = WORK / "artifacts"
+    art.mkdir(parents=True, exist_ok=True)
+    cal.save(art / "calibrator.npz")
+    kaggle_env.write_json({"decoder": {k: best[k] for k in ("method", "mode", "lam", "q", "t")},
+                           "max_n": MAX_N, "min_p": DC.get("min_p", 0.0), "seed": SEED}, art / "final_config.json")
+    (art / "stage1_model.txt").write_bytes((s1_dir / "stage1_model.txt").read_bytes())
+    if (s1_dir / "prerank_half0.txt").exists():  # older NB06 outputs may lack the cross-fitted pre-ranker
+        for f in ("prerank_half0.txt", "prerank_half1.txt"):
+            (art / f).write_bytes((s1_dir / f).read_bytes())
+    kaggle_env.log(f"artifacts saved: {[p.name for p in art.iterdir()]}")
 
     # ---------------- scrambled-letter run ----------------
     import lightgbm as lgb

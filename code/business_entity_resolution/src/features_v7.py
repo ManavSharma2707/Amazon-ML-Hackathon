@@ -326,6 +326,57 @@ def build_features(cands: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lo
     return pd.DataFrame(arr, columns=names)
 
 
+def build_features_delta(cands: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lookups: dict,
+                         prior_tail: pd.DataFrame, n_jobs: int = 1, score_col: str = "cheap_score",
+                         log=print) -> pd.DataFrame:
+    """Like `build_features`, but reuses the expensive RF+PY block from an earlier
+    blocking version's saved features wherever the same pair already has one.
+
+    META_FEATURES (channel bits/scores, rank, gap, n_channels, is_S3) always
+    depend on the CURRENT candidate table's blocking config, so they're always
+    computed fresh here (cheap, vectorised). The RF+PY tail
+    (`rapidfuzz` string similarities + explain-the-difference token features)
+    depends only on the two records' text, not on which blocking version
+    found the pair -- so for any (s1_id, cand_id) that a prior run already
+    scored, that value is reused verbatim; `pair_features` (the slow,
+    per-pair Python path, ~0.4ms/pair) runs only for pairs prior_tail lacks.
+
+    Inputs: cands - s1_id, cand_id, bitmask, n_channels, channel scores,
+            `score_col`; s1, pool - record frames with REC_COLS; lookups -
+            `token_lookups` output; prior_tail - DataFrame with s1_id, cand_id
+            + RF_FEATURES + PY_FEATURES columns from an earlier run (e.g. a
+            saved feats_*.parquet); n_jobs; score_col; log.
+    Outputs: DataFrame (same row order as cands), columns = FEATURES.
+    """
+    cands = cands.reset_index(drop=True)
+    q, p = rows_for(cands, s1, pool)
+    is_s3 = np.asarray(pool["entity_id"].str.startswith("S3-"), dtype=bool)
+    meta = meta_features(cands, is_s3, p, q, score_col)
+
+    tail_cols = RF_FEATURES + PY_FEATURES
+    merged = cands[["s1_id", "cand_id"]].merge(prior_tail[["s1_id", "cand_id"] + tail_cols],
+                                               on=["s1_id", "cand_id"], how="left")
+    assert len(merged) == len(cands), "delta merge changed row count (duplicate keys in prior_tail?)"
+    reused = merged[tail_cols[0]].notna().to_numpy()
+    log(f"    delta reuse: {int(reused.sum()):,}/{len(cands):,} pairs ({reused.mean():.1%}) from prior features")
+
+    tail = np.empty((len(cands), len(tail_cols)), dtype=np.float32)
+    tail[reused] = merged.loc[reused, tail_cols].to_numpy(np.float32)
+
+    new_idx = np.flatnonzero(~reused)
+    if len(new_idx):
+        set_context(s1, pool, lookups)
+        qn, pn = q[new_idx], p[new_idx]
+        order = np.argsort(qn, kind="stable")
+        rest = pair_features(qn[order], pn[order], with_py=True, n_jobs=n_jobs, log=log)
+        back = np.empty_like(order)
+        back[order] = np.arange(len(order))
+        tail[new_idx] = rest[back]
+
+    arr = np.hstack([meta, tail])
+    return pd.DataFrame(arr, columns=FEATURES)
+
+
 def time_per_pair(cands: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame, lookups: dict, n_jobs: int,
                   n: int = 10_000, with_py: bool = True) -> float:
     """Wall-clock seconds per pair of `build_features` on the first `n` candidate rows (all workers)."""

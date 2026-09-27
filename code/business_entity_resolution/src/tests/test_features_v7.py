@@ -55,6 +55,33 @@ def test_v7_feature_table_includes_translit_channels(setup):
     assert np.isfinite(X["cheap_rank"]).all() and (X["cheap_rank"] >= 0).all()
 
 
+def test_v7_build_features_delta_matches_full_compute(setup):
+    """Reusing a prior run's RF+PY tail for some pairs and computing the rest
+    fresh must give byte-for-byte the same table as computing everything fresh."""
+    s1, pool, lookups, cands = setup
+    full = features.build_features(cands, s1, pool, lookups, n_jobs=1, log=lambda m: None)
+
+    tail_cols = features.RF_FEATURES + features.PY_FEATURES
+    rng = np.random.default_rng(1)
+    half_mask = rng.random(len(cands)) < 0.5
+    prior_tail = cands.loc[half_mask, ["s1_id", "cand_id"]].reset_index(drop=True)
+    prior_tail[tail_cols] = full.loc[half_mask, tail_cols].reset_index(drop=True)
+
+    delta = features.build_features_delta(cands, s1, pool, lookups, prior_tail, n_jobs=1, log=lambda m: None)
+    assert list(delta.columns) == features.FEATURES
+    np.testing.assert_array_equal(delta.to_numpy(), full.to_numpy())
+
+
+def test_v7_build_features_delta_with_no_reuse_equals_full_compute(setup):
+    """An empty prior_tail (nothing reusable) must fall back to a full compute."""
+    s1, pool, lookups, cands = setup
+    full = features.build_features(cands, s1, pool, lookups, n_jobs=1, log=lambda m: None)
+    tail_cols = features.RF_FEATURES + features.PY_FEATURES
+    empty_prior = pd.DataFrame(columns=["s1_id", "cand_id"] + tail_cols)
+    delta = features.build_features_delta(cands, s1, pool, lookups, empty_prior, n_jobs=1, log=lambda m: None)
+    np.testing.assert_array_equal(delta.to_numpy(), full.to_numpy())
+
+
 def test_v7_handles_missing_translit_columns_like_v6_cands(setup):
     """Candidates from a v6-shaped file (no translit_*_score columns) don't crash -- the
     NB06v7 driver's `fill_missing` NaN-fills these; build_features must tolerate NaN there

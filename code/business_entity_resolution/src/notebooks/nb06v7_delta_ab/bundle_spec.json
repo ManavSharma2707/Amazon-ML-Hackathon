@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "corpus_stats", "blocking", "explain_diff", "features_v7", "stage1",
+              "decoder", "exclusivity"],
+  "driver": "driver.py",
+  "output": "nb06v7_delta_ab.py",
+  "config": true
+}

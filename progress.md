@@ -154,7 +154,7 @@
 
 | # | Time (IST) | Description | Git tag / commit | B F0.5 | LOCO-mean | Public LB | Validator | File version |
 |---|---|---|---|---|---|---|---|---|
-| — | | | | | | | | |
+| sub-01 | 2026-09-27 13:00 | Stage-1 (NB06 v1, v4 cands top-20) + isotonic + hard one-owner + decoder (lam 1.3), `er-nb09a-decode-submit` v2 | tag `sub-01` | 0.9648 (US 0.9699 / India 0.9571) | 0.9635 (lite) | pending (user uploads) | PASS (local + in-kernel --check-ids) | output/*.tsv |
 
 ---
 

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa5b1"></path>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1200" height="300" fill="#ffffff"></rect>
+
+  <!-- connecting arrows -->
+  <line x1="272" y1="150" x2="318" y2="150" stroke="#9aa5b1" stroke-width="2" marker-end="url(#arrow)"></line>
+  <line x1="572" y1="150" x2="618" y2="150" stroke="#9aa5b1" stroke-width="2" marker-end="url(#arrow)"></line>
+  <line x1="872" y1="150" x2="918" y2="150" stroke="#9aa5b1" stroke-width="2" marker-end="url(#arrow)"></line>
+
+  <!-- stage 1: normalise -->
+  <rect x="20" y="90" width="252" height="120" rx="12" fill="#ffffff" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="146" y="130" text-anchor="middle" font-size="19" font-weight="700" fill="#1f2933">Normalise</text>
+  <text x="146" y="156" text-anchor="middle" font-size="12.5" fill="#616e7c">Unicode cleanup, script</text>
+  <text x="146" y="174" text-anchor="middle" font-size="12.5" fill="#616e7c">romanisation, number and</text>
+  <text x="146" y="192" text-anchor="middle" font-size="12.5" fill="#616e7c">landmark extraction</text>
+
+  <!-- stage 2: block -->
+  <rect x="320" y="90" width="252" height="120" rx="12" fill="#ffffff" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="446" y="130" text-anchor="middle" font-size="19" font-weight="700" fill="#1f2933">Block</text>
+  <text x="446" y="156" text-anchor="middle" font-size="12.5" fill="#616e7c">Within-country sparse</text>
+  <text x="446" y="174" text-anchor="middle" font-size="12.5" fill="#616e7c">candidate channels, pruned</text>
+  <text x="446" y="192" text-anchor="middle" font-size="12.5" fill="#616e7c">by a LightGBM pre-ranker</text>
+
+  <!-- stage 3: classify -->
+  <rect x="620" y="90" width="252" height="120" rx="12" fill="#ffffff" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="746" y="130" text-anchor="middle" font-size="19" font-weight="700" fill="#1f2933">Classify</text>
+  <text x="746" y="156" text-anchor="middle" font-size="12.5" fill="#616e7c">Explain-the-difference token</text>
+  <text x="746" y="174" text-anchor="middle" font-size="12.5" fill="#616e7c">features, scored by a</text>
+  <text x="746" y="192" text-anchor="middle" font-size="12.5" fill="#616e7c">grouped LightGBM classifier</text>
+
+  <!-- stage 4: calibrate and decode -->
+  <rect x="920" y="90" width="260" height="120" rx="12" fill="#1f6feb" stroke="#1f6feb" stroke-width="2"></rect>
+  <text x="1050" y="130" text-anchor="middle" font-size="19" font-weight="700" fill="#ffffff">Calibrate &amp; decode</text>
+  <text x="1050" y="156" text-anchor="middle" font-size="12.5" fill="#dbeafe">Isotonic calibration, a hard</text>
+  <text x="1050" y="174" text-anchor="middle" font-size="12.5" fill="#dbeafe">one-owner rule, and an</text>
+  <text x="1050" y="192" text-anchor="middle" font-size="12.5" fill="#dbeafe">expected-F0.5 decoder</text>
+
+  <text x="600" y="260" text-anchor="middle" font-size="13" fill="#9aa5b1" font-style="italic">
+    No country- or language-specific logic at any stage, so the pipeline transfers to France (unseen at training time) unchanged.
+  </text>
+</svg>

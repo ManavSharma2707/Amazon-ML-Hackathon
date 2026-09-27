@@ -10,17 +10,23 @@ The evaluation metric is macro-averaged F0.5 per `S1` entity, which weights prec
 
 ## Approach
 
+![Pipeline overview: normalise, block, classify, calibrate and decode](docs/images/pipeline.svg)
+
 The pipeline follows a standard four-stage entity-resolution design, kept deliberately simple and free of language- or country-specific logic throughout:
 
 **Normalisation.** Unicode and accent cleanup, ligature folding, and a from-scratch, stdlib-only romanisation of Brahmic scripts (no external transliteration library, since none is permitted under the competition rules). House numbers and postcodes are extracted by shape and position rather than by country-specific format, landmark phrases are separated out of addresses, and a phonetic "fold" form is derived for typo and transliteration tolerance.
 
 **Blocking.** Candidate generation is restricted to matching records within the same country, a property confirmed directly from the training ground truth rather than assumed. Several sparse channels contribute candidates: character-level TF-IDF, a rare-token key, a house-number-and-street key, and, as the strongest single contributor, unordered token-pair keys. Business names in this dataset are built from a small, shared, combinatorial vocabulary, so any single token is a weak signal on its own, but a pair of tokens occurring together is rare and highly discriminating. A LightGBM pre-ranker, trained on a held-out half of the training data, prunes the resulting candidate union down to fifty candidates per `S1` entity.
 
+![Blocking pair recall rising from 0.7240 to 0.9736 across five channel iterations](docs/images/blocking_recall.png)
+
 **Feature extraction and classification.** Each candidate pair is scored using around 120 features that avoid raw vocabulary or country signals. Alongside standard string-similarity measures, the central idea is an "explain-the-difference" feature set: every pair of tokens across two records is classified as an exact match, a phonetic fold, a typo, an abbreviation, a split-or-joined form, an initialism, or a numeric match, using a set of symmetric, cached comparisons. The rarest token left unexplained on either side turns out to be the strongest signal of a genuine mismatch. Numeric fields (house numbers, postcodes) are handled separately, since a conflicting house number on an otherwise near-identical pair is the classic signature of two different branches of the same chain, exactly the kind of false positive the metric punishes most severely. A LightGBM classifier, trained with grouped cross-validation so that no `S1` entity leaks across folds, scores every candidate pair.
 
 **Calibration and decoding.** Raw classifier scores are calibrated with cross-fitted isotonic regression. A hard one-owner rule is then applied, since the training data confirms that no `S2` or `S3` record ever belongs to more than one `S1` entity. Finally, an expected-F0.5 decoder considers every plausible prediction set for each entity, including the empty set, scores each one under a Poisson-binomial model of the calibrated probabilities, and keeps the set with the highest expected score. This handles both "one confident match" and "several moderate matches" correctly in a way that a single global threshold cannot.
 
 ## Results
+
+![Half-B macro F0.5 by pipeline configuration, rising from an all-empty baseline of 0.0547 to 0.9648 for the shipped configuration](docs/images/results.png)
 
 | Configuration | Half-B F0.5 | LOCO-mean | Scrambled-letter drop |
 |---|---|---|---|

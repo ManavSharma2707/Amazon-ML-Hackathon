@@ -5,19 +5,26 @@
 
 ---
 
-## Autonomous run state (PROMPT FINAL)
+## Autonomous run state (PROMPT FINISH — Option C)
 
-- **Updated:** 2026-09-27 10:58 IST
-- **Stage:** S0/S1 — still no submission: sub-01 waits on NB06 v1 -> NB09a
-- **Iteration #:** 0
-- **Current best config:** none measured yet
-- **Best B F0.5 / LOCO-mean / scrambled drop:** — / — / — ; blocking B pair recall 0.9736 (v6)
-- **Running notebooks (R1, pushed 10:57 IST):** er-nb09a-decode-submit v1 (sub-01), er-nb06b-judge-data v1, er-nb09-combine v1 (safety #2 candidate)
-- **NB06 v1 COMPLETE** (~08:15 IST, 17,881 s, on NB05 **v4** candidates): stage-1 AUC B 0.99961 / A OOF 0.99959; pre-rank top-20 recall 0.9585 -> 0.9576; stage-1 hit the 1500-round cap. Background poller notification arrived only at 10:53 (~2.5 h lost); now polling in the foreground
-- **Done:** NB05 v5 (0.9733), NB05 v6 (0.9736, latest output = v6); NB07 dry run (R2) clean
-- **Ready, not pushed:** NB07 full, NB08 (after NB06b relay). **NB06 v2 dropped:** a 5 h rerun on v6 candidates cannot finish + feed NB09 before the 16:30 hard stop
-- **Next action:** NB06 v1 done -> fetch metrics -> push NB09a + NB06b; then NB06 v2 on v6 -> NB09 (safety #2)
-- **Uploads used today (27 Sep):** 0 (assumed)
+- **Updated:** 2026-09-27 15:30 IST
+- **Stage:** Track 1 ABORTED at S0 (feasibility check); Track 2 (packaging) in progress
+- **sub-01 UPLOADED** by user (public LB score pending)
+- **Final submission = sub-01** (stage-1 + isotonic + hard one-owner + expected-F0.5 decoder, NB09a v3 with saved artifacts, `er-nb09a-decode-submit`, tag `sub-01`, commit `698bd24`; v3 re-verified byte-identical B.f05 0.964763 to v2). B F0.5 0.9648 (US 0.9699 / India 0.9571), LOCO-mean 0.9635, scrambled drop 0.0009.
+- **Combiner (NB09) does NOT replace it:** B F0.5 0.9674 (real gain, bootstrap CI excludes 0) but LOCO-mean 0.963464 vs sub-01's 0.963472 — no LOCO gain, so per CLAUDE.md §4.3 gate it is dropped as the final config (kept as a documented ablation/ablation-table row only).
+- **Judge dropped:** G4 failed (band AUC 0.774 vs stage-1 0.877).
+- **Track 1 (incremental v6 blocking) ABORTED before starting:** honest projection for a new incremental NB06c (fresh meta-features + cheap rapidfuzz re-rank pass over v6's ~50/S1 pool for B+test, delta-compute full features only for v6\v4 rows, reuse v4∩v6 rows from NB06 v1's saved feats) is ~4-4.5h critical path from 14:18 → finishes 18:30-19:00 with zero margin for the Kaggle-only bugs that cost 30-90 min each earlier today (pyarrow list-cast crash, Windows encoding). Expected gain (~+0.003-0.005 on B, unknown/small on LOCO) doesn't justify the freeze risk. Logged, not re-litigated.
+- **Track 2 progress so far:**
+  - NB09a re-run (v3) to persist reproducibility artifacts: `decoder.Isotonic.save/load`, `save/load_demo_artifacts`; `artifacts/` (stage1_model.txt 11.6MB, calibrator.npz, final_config.json) copied into `code/business_entity_resolution/artifacts/` (gitignored, shipped in the zip directly, not via git).
+  - `src/predict.py` written: `run_from_features` (exact reproduction), `run_inference` (full pipeline given trained artifacts), `train_demo`/`save_demo_artifacts`/`load_demo_artifacts` (self-contained sample/ demo). `src/blocking.py` gained `build_union`/`build_candidates`/`pruned_to_table` (reusable, tested pipeline entry points).
+  - **Real bug caught and fixed by testing against the actual shipped artifacts:** `features.SPARSE_CHANNELS` had grown an 8th "reverse" channel (added earlier today, after NB06 v1 had already been pushed/run) — the real `stage1_model.txt` has 108 features, current code would have produced 110 and silently been incompatible. Reverted to the 7-channel list that actually shipped; a unit test (`test_predict.py::test_from_features_loads_real_shipped_artifacts`) now loads the REAL bundled artifacts and guards against this regressing.
+  - `run_train.sh` (trains a demo pruner+stage1+calibrator on sample/train/'s own labels) and `run_predict.sh` (`--from-features` for exact reproduction; `--demo` applies a run_train.sh model to sample/test/) both verified end-to-end on this machine (via a python3 shim, since bare `python3` here resolves to the Store stub). 89/89 tests pass.
+  - `requirements.txt` re-pinned from real Kaggle install logs (numpy 2.5.3, pandas/pyarrow noted as unconfirmed patch, scipy 1.18.1, scikit-learn 1.9.1, lightgbm 4.7.0, rapidfuzz 3.14.6, PyYAML 6.0.3, torch 2.14.0, transformers 6.1.0, peft 0.21.0, accelerate 1.15.0, bitsandbytes 0.50.2, huggingface_hub 1.33.0); faiss-cpu/sentence-transformers/anyascii dropped (not imported by src/).
+  - `README.md` rewritten: honest about what's actually on the shipped inference path (LightGBM only; Qwen3 downloaded/coded/evaluated but not shipped), real notebook runtimes table, reproduction instructions.
+  - `src/scripts/make_doc_tables.py` written and run against `reports/raw/*` to generate every table in the two documents below (no hand-typed numbers).
+  - `Documentation_template.md` (full) and `approach_summary.md` (≤2 pages) written, using make_doc_tables.py's real output.
+- **Still to do before 19:30:** NB11 reproducibility check (optional, time-permitting — predict.py's own tests already cover both reproduction paths); code audit (docstrings/dead code/hard-coded paths — mostly already true from earlier prompts' discipline, spot-check remaining); privacy scan of full git history (not just this diff); build the final zip; walk memory.md §11; SUBMISSION_READY.md.
+- **Uploads used today (27 Sep):** 1 (sub-01)
 - **Peer sessions:** amazon-hackathon-0c / -6c asked (04:40) not to push/commit
 
 ## Current focus

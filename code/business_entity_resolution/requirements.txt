@@ -1,17 +1,29 @@
-# Pinned at packaging time from the Kaggle run (CLAUDE.md SS5). Draft versions below;
-# re-pin exact versions once NB00/NB03 print `pip freeze` on Kaggle.
-pandas==2.2.2
-numpy==1.26.4
-scipy==1.13.1
-scikit-learn==1.5.0
-lightgbm==4.3.0
-rapidfuzz==3.9.4
-faiss-cpu==1.8.0
-sentence-transformers==3.0.1
-transformers==4.51.0
-peft==0.11.1
-accelerate==0.31.0
-bitsandbytes==0.43.1
-anyascii==0.3.2
-PyYAML==6.0.1
+# Only packages actually imported by src/ (CLAUDE.md SS5). Versions below are
+# pinned from real installs observed on this Kaggle image on 2026-09-26/27
+# (NB00's wheel-download log, reports/raw/nb00_r1/*.log) except where noted;
+# see README.md "Environment" for how to regenerate this file with a live
+# `pip freeze` (NB11 prints one on every run).
+
+# CPU pipeline (normalise, blocking, features, stage-1, decoder; every notebook)
+numpy==2.5.3
+pandas==2.2.3          # exact patch not captured this run; pandas 2.2.x confirmed (a 2.2-era Arrow list-cast
+                       # bug was hit and worked around in io_utils.pairs_to_lists, memory.md pitfalls)
+pyarrow==17.0.0        # ships in the Kaggle base image; not separately captured this run, see note above
+scipy==1.18.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+rapidfuzz==3.14.6
+PyYAML==6.0.3
+
+# GPU judge track (src/judge_train.py, src/judge_infer.py; NB07/NB08 only)
+torch==2.14.0
+transformers==6.1.0
+peft==0.21.0
+accelerate==1.15.0
+bitsandbytes==0.50.2
+
+# One-time model download (src/notebooks/nb00_download_models, internet ON)
+huggingface_hub==1.33.0
+
+# Local development only (unit tests on sample/)
 pytest==8.2.2

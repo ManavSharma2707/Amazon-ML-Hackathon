@@ -478,6 +478,88 @@ def blocking_report(
     return rep
 
 
+# ---------------------------------------------------------------------------
+# Whole-pipeline entry point (src/predict.py; the Kaggle NB05 driver does the
+# same thing but per-country-chunked over millions of S1s, CLAUDE.md SS6.3)
+# ---------------------------------------------------------------------------
+
+_CORE_CHANNELS = ["name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair"]
+
+
+def _channel_specs(s1: pd.DataFrame, pool: pd.DataFrame, cfg: dict) -> dict:
+    """(text_fn, kind, k, max_df) per core sparse channel, reading `cfg` (the `blocking:` config block)."""
+    return {
+        "name_char": (lambda d: d["norm_name"].tolist(), "char", cfg["tfidf_name_k"], cfg["name_char_max_df"]),
+        "addr_char": (lambda d: d["norm_addr"].tolist(), "char", cfg["tfidf_addr_k"], cfg["addr_char_max_df"]),
+        "name_tok": (lambda d: name_tok_text(d["norm_name"], d["fold_name"]), "word", cfg["rare_token_cap"], cfg["name_tok_max_df"]),
+        "num_key": (lambda d: num_key_text(d["norm_addr"], d["house_number"]), "word", cfg["num_key_k"], cfg["num_key_max_df"]),
+        "name_pair": (lambda d: d["fold_name"].tolist(), "name_pair", cfg["pair_k"], cfg["pair_max_df"]),
+        "addr_pair": (lambda d: d["fold_addr"].tolist(), "addr_pair", cfg["pair_k"], cfg["pair_max_df"]),
+        "cross_pair": (lambda d: cross_text(d["fold_name"], d["fold_addr"]), "cross_pair", cfg["pair_k"], cfg["pair_max_df"]),
+    }
+
+
+def build_union(s1: pd.DataFrame, pool: pd.DataFrame, cfg: dict, n_jobs: int = 1, log=lambda m: None) -> pd.DataFrame:
+    """The 7 core sparse channels (no dense/reverse), unioned with cheap gap features, within country.
+
+    This is the same core logic the Kaggle blocking notebook runs per country
+    chunk (architecture.md SS6.7); here over the whole given frames at once,
+    which is fine for a `sample/`-sized or moderate dataset (no millions-of-
+    rows chunking — that is a Kaggle-notebook concern, CLAUDE.md SS5 scale guard).
+
+    Inputs: s1, pool - normalised record frames (normalize.normalize_df output,
+            with `country`, `entity_id`); cfg - the `blocking:` config block;
+            n_jobs; log.
+    Outputs: union frame (q_row/p_row index s1/pool rows, bitmask, gap features).
+    """
+    s1_cty, p_cty = s1["country"].to_numpy(), pool["country"].to_numpy()
+    parts = {c: [] for c in _CORE_CHANNELS}
+    for c in sorted(set(s1_cty.tolist())):
+        qi = np.flatnonzero(s1_cty == c)
+        pi = np.flatnonzero(p_cty == c)
+        if not len(qi) or not len(pi):
+            continue
+        q, p = s1.iloc[qi], pool.iloc[pi]
+        for ch, (text_fn, kind, k, max_df) in _channel_specs(s1, pool, cfg).items():
+            a, b, sc, r = run_sparse_channel(text_fn(q), text_fn(p), kind, k=k, max_df=max_df, n_jobs=n_jobs)
+            parts[ch].append((qi[a].astype(np.int32), pi[b].astype(np.int32), sc, r))
+            log(f"  {c!r} {ch}: {len(a):,} pairs")
+    merged = {ch: tuple(np.concatenate([x[i] for x in v]) for i in range(4)) for ch, v in parts.items() if v}
+    u = union_channels(merged, len(pool))
+    u["dense_cos"] = np.float32(np.nan)  # no dense/embedding channel here (memory.md SS5: infeasible at scale)
+    add_gap_features(u)
+    return u
+
+
+def pruned_to_table(pr: pd.DataFrame, s1: pd.DataFrame, pool: pd.DataFrame) -> pd.DataFrame:
+    """Pruned union rows (q_row/p_row) -> the saved candidate table with entity IDs.
+
+    Inputs: pr - a `prune()` result; s1, pool - the frames `q_row`/`p_row` index into.
+    Outputs: DataFrame s1_id, cand_id, bitmask, n_channels, <channel>_score, cheap_score.
+    """
+    keep = ["bitmask", "n_channels"] + [f"{c}_score" for c in _CORE_CHANNELS] + ["cheap_score"]
+    out = pr[keep].copy()
+    out.insert(0, "cand_id", pool["entity_id"].to_numpy()[pr["p_row"].to_numpy()])
+    out.insert(0, "s1_id", s1["entity_id"].to_numpy()[pr["q_row"].to_numpy()])
+    return out
+
+
+def build_candidates(s1: pd.DataFrame, pool: pd.DataFrame, cfg: dict, pruner=None, n_jobs: int = 1,
+                     log=lambda m: None) -> pd.DataFrame:
+    """Union -> prune to `cfg['prune_top']` per S1 -> candidate table with entity IDs.
+
+    Inputs: s1, pool; cfg; pruner - trained LightGBM pre-ranker Booster
+            (`train_pruner`'s output) scoring `PRUNE_FEATURES`; if None, the
+            union's `n_channels` is used as a weak default score, only meant
+            for quick demos without a trained pruner; n_jobs; log.
+    Outputs: DataFrame s1_id, cand_id, bitmask, n_channels, <channel>_score.
+    """
+    u = build_union(s1, pool, cfg, n_jobs=n_jobs, log=log)
+    score = (pruner.predict(u[PRUNE_FEATURES].to_numpy(np.float32), num_threads=n_jobs) if pruner is not None
+            else u["n_channels"].to_numpy(np.float32))
+    return pruned_to_table(prune(u, score, cfg["prune_top"]), s1, pool)
+
+
 def main() -> None:
     """Smoke test: one sparse channel on four toy names."""
     q = ["alpha trading co", "beta foods"]

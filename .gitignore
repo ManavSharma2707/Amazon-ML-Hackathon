@@ -5,6 +5,7 @@ reports/raw/
 *.parquet
 models/
 wheels/
+code/business_entity_resolution/artifacts/
 CLAUDE.local.md
 .env*
 PROMPTS.md

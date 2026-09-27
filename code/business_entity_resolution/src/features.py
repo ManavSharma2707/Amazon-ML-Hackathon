@@ -31,7 +31,11 @@ import pandas as pd
 
 from . import blocking, corpus_stats, explain_diff
 
-SPARSE_CHANNELS = ["name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair", "reverse"]
+SPARSE_CHANNELS = ["name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair"]
+# NOT "reverse": that channel was added to blocking.py's NB05 driver (v6, memory.md SS5) after the
+# shipped stage1_model.txt was already trained on NB06 v1's output (7 channels, 108 features) — adding
+# it here would silently make this repo's feature table incompatible with the artifacts it ships
+# (src/predict.py --from-features). A future run that retrains on v6 candidates should add it back here.
 REC_COLS = ["entity_id", "country", "norm_name", "fold_name", "norm_addr", "fold_addr", "name_numbers",
             "addr_numbers", "house_number", "postcodes", "landmark", "name_romanized"]
 

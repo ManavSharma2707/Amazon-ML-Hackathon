@@ -113,3 +113,28 @@ def test_sparse_channels_recall_on_sample():
     # The sample pool is ~0.2% of the real one, so this is an easy setting: a
     # loose floor that catches a broken channel, not a quality claim.
     assert got.mean() > 0.95
+
+
+@pytest.mark.skipif(not (SAMPLE / "train" / "train_ground_truth.tsv").exists(), reason="sample/ not built")
+def test_build_candidates_pipeline_on_sample():
+    """`build_union` + `train_pruner` + `build_candidates` (src/predict.py's blocking step) on sample/."""
+    cfg = io_utils.load_config(Path(__file__).resolve().parents[1] / "configs" / "default.yaml")["blocking"]
+    frames = {s: normalize.normalize_df(io_utils.load_tsv(SAMPLE / "train" / f"train_source{s}.tsv"), f"S{s}") for s in "123"}
+    s1 = frames["1"]
+    pool = pd.concat([frames["2"], frames["3"]], ignore_index=True)
+    gt = io_utils.load_ground_truth(SAMPLE / "train" / "train_ground_truth.tsv")
+    pairs = split.gt_long(gt)
+
+    u = blocking.build_union(s1, pool, cfg)
+    s1_pos = pd.Series(np.arange(len(s1)), index=s1["entity_id"])
+    p_pos = pd.Series(np.arange(len(pool)), index=pool["entity_id"])
+    keys_true = s1_pos.loc[pairs["s1_id"]].to_numpy().astype(np.int64) * len(pool) + p_pos.loc[pairs["match_id"]].to_numpy()
+    y = np.isin(u["q_row"].to_numpy().astype(np.int64) * len(pool) + u["p_row"].to_numpy(), keys_true).astype(np.int8)
+    pruner = blocking.train_pruner(u, y, seed=0)
+
+    cands = blocking.build_candidates(s1, pool, cfg, pruner=pruner)
+    assert set(cands.columns) >= {"s1_id", "cand_id", "bitmask", "n_channels", "cheap_score"}
+    assert not cands.duplicated(["s1_id", "cand_id"]).any()
+    assert (cands.groupby("s1_id").size() <= cfg["prune_top"]).all()
+    got = np.isin(pairs["s1_id"] + "|" + pairs["match_id"], (cands["s1_id"] + "|" + cands["cand_id"]).to_numpy())
+    assert got.mean() > 0.90  # same easy small-pool setting as the channel-only test above

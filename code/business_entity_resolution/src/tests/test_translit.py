@@ -41,9 +41,10 @@ def test_build_dictionary_learns_distinct_mappings_from_varied_contexts():
     d = translit.build_dictionary(pairs, min_count=3, min_dice=0.5)
     assert d[HI_FUTURE] == "future"
     assert d[HI_TECH] == "technology"
-    # HI_PVT co-occurs equally with everything (incl. "pvt"/"ltd" which are constant
-    # across all 6 pairs) -- "pvt" should win since it's a perfect co-occurrence match.
-    assert d[HI_PVT] == "pvt"
+    # HI_PVT co-occurs equally with "pvt" and "ltd" (both constant across all 6
+    # pairs) -- either is a valid, perfect-Dice pick; Python's per-run string
+    # hash randomisation decides the tie, so don't assert a specific winner.
+    assert d[HI_PVT] in ("pvt", "ltd")
 
 
 def test_build_dictionary_respects_min_count():

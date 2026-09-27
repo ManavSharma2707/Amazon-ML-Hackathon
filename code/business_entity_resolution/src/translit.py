@@ -239,6 +239,20 @@ def translit_field(raw_text: str, dictionary: dict[str, str]) -> str:
     return normalize.fold(" ".join(tokens))
 
 
+def _translit_chunk(part: list[tuple[str, str]], dictionary: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Worker: transliterate a chunk of (raw_name, raw_addr) pairs.
+
+    Module-level (not nested inside `add_translit_columns`) so
+    `multiprocessing.Pool` can pickle it -- a nested closure can't be
+    pickled (`AttributeError: Can't get local object '...<locals>._work'`,
+    hit in the first NB05v7 Kaggle run; see memory.md pitfalls).
+    """
+    return (
+        [translit_field(n, dictionary) for n, _ in part],
+        [translit_field(a, dictionary) for _, a in part],
+    )
+
+
 def add_translit_columns(df, dictionary: dict[str, str], n_jobs: int = 1, chunk: int = 50_000, log_every: int = 20):
     """Add `translit_name` / `translit_addr` columns to a records DataFrame, chunked + parallel.
 
@@ -249,17 +263,13 @@ def add_translit_columns(df, dictionary: dict[str, str], n_jobs: int = 1, chunk:
             chunk; log_every. Outputs: df with the two new columns added
             (mutates and returns the same object).
     """
+    from functools import partial
     from multiprocessing import Pool
 
     t0 = time.time()
     pairs = list(zip(df["raw_name"].tolist(), df["raw_addr"].tolist()))
     chunks = [pairs[i : i + chunk] for i in range(0, len(pairs), chunk)]
-
-    def _work(part):
-        return (
-            [translit_field(n, dictionary) for n, _ in part],
-            [translit_field(a, dictionary) for _, a in part],
-        )
+    worker = partial(_translit_chunk, dictionary=dictionary)
 
     names, addrs = [], []
 
@@ -272,11 +282,11 @@ def add_translit_columns(df, dictionary: dict[str, str], n_jobs: int = 1, chunk:
 
     if n_jobs > 1 and len(chunks) > 1:
         with Pool(n_jobs) as pool:
-            for i, part in enumerate(pool.imap(_work, chunks)):
+            for i, part in enumerate(pool.imap(worker, chunks)):
                 _collect(i, part)
     else:
         for i, c in enumerate(chunks):
-            _collect(i, _work(c))
+            _collect(i, worker(c))
     df["translit_name"] = names
     df["translit_addr"] = addrs
     return df

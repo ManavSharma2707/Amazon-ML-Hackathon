@@ -189,6 +189,18 @@ import pandas as pd
 
 WORK = kaggle_env.WORK_DIR
 N_JOBS = os.cpu_count() or 1
+# Forced single-process for the residual RF+PY feature computation (see
+# build_features_delta below): pair_features uses a fork-based
+# multiprocessing.Pool (blocking._fork_pool). This driver reads two large
+# parquet files via pyarrow (v7 cands + the prior-run feats) right before
+# that call; nb05v7_translit hit two other fork-related failures on this same
+# Kaggle image today (an inherited LightGBM Booster segfaulting post-fork,
+# and OOM from cross-country memory accumulation), and this run hung with
+# zero progress logged for over an hour at exactly the point pair_features's
+# pool would spin up -- consistent with pyarrow's internal thread pool still
+# holding a lock at fork time, which a forked worker can then block on
+# forever. Trading parallelism for reliability here on the same reasoning.
+FEATURE_N_JOBS = 1
 SC = CONFIG["stage1"]
 SEED = CONFIG["seed"]
 REC_COLS = features_v7.REC_COLS
@@ -268,7 +280,7 @@ def main() -> None:
         c = read_cands(cand_dir / f"cands_{h}.parquet")
         prior_tail = read_prior_tail(prior_dir / f"feats_{h}.parquet")
         kaggle_env.log(f"{h}: {len(c):,} v7 candidate pairs, {c['s1_id'].nunique():,} S1; prior feats {len(prior_tail):,} rows")
-        f = features_v7.build_features_delta(c, s1, pool, lookups, prior_tail, n_jobs=N_JOBS, log=kaggle_env.log)
+        f = features_v7.build_features_delta(c, s1, pool, lookups, prior_tail, n_jobs=FEATURE_N_JOBS, log=kaggle_env.log)
         y = add_labels(c, gt)
         feats[h], labels[h], cands_out[h] = f, y, c
         out = f.copy()

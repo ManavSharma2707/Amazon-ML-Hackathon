@@ -45,7 +45,10 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-CHANNELS = ["dense", "reverse", "name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair"]
+CHANNELS = [
+    "dense", "reverse", "name_char", "addr_char", "name_tok", "num_key", "name_pair", "addr_pair", "cross_pair",
+    "translit_name", "translit_addr",
+]
 _PAIR_MAX_TOKENS = {"name_pair": 8, "addr_pair": 10, "cross_name": 6, "cross_addr": 10}
 # Digits used as look-alike letters inside words ("k01kata", "h0spital",
 # "dermato1ogy"): a noise type found in NB05 v4's missed B pairs.
@@ -359,7 +362,7 @@ def add_gap_features(u: pd.DataFrame) -> None:
     starts = np.flatnonzero(np.r_[True, u["q_row"].to_numpy()[1:] != u["q_row"].to_numpy()[:-1]])
     sizes = np.diff(np.r_[starts, len(u)])
     for col in ("dense_cos", "name_char_score", "addr_char_score", "name_tok_score", "name_pair_score", "addr_pair_score",
-                "cross_pair_score"):
+                "cross_pair_score", "translit_name_score", "translit_addr_score"):
         v = u[col].to_numpy()
         best = np.fmax.reduceat(np.nan_to_num(v, nan=-1.0), starts)
         u[f"{col}_gap"] = v - np.repeat(best, sizes)
@@ -375,6 +378,8 @@ PRUNE_FEATURES = [
     "name_pair_score", "name_pair_rank", "name_pair_score_gap",
     "addr_pair_score", "addr_pair_rank", "addr_pair_score_gap",
     "cross_pair_score", "cross_pair_rank", "cross_pair_score_gap",
+    "translit_name_score", "translit_name_rank", "translit_name_score_gap",
+    "translit_addr_score", "translit_addr_rank", "translit_addr_score_gap",
 ]
 
 

@@ -59,6 +59,7 @@
 | rapidfuzz, faiss | MIT | — | Features, kNN | planned |
 | sentence-transformers, transformers, peft, accelerate | Apache-2.0 | — | Training / inference | planned |
 | bitsandbytes | MIT | — | 4-bit QLoRA | planned |
+| anyascii | ISC (verified on PyPI project page, 2026-09-27) | — | V7 translit fallback for non-Latin tokens with no learned dictionary entry (`src/translit.py`) — rule-based Unicode table, no external corpus, unlike GPL `unidecode` or `libpostal` (SS3) | shipped (nb05v7) |
 
 ## 5. Key decisions (with reasons)
 
@@ -101,6 +102,11 @@
 | 2026-09-27 04:05 IST | **Combiner re-scores only pairs with stage-1 p >= 0.001 (p_floor); others keep p1, identically on test** | LightGBM time on ~5M B rows; true pairs below the floor are reported in NB09 metrics |
 | 2026-09-27 04:10 IST | **Judge inference (NB08) scores B and test in one queue, most uncertain first, and cuts both at the same depth abs(p1 - 0.5)** | `judge_scored` must mean the same thing in the combiner's training data (B) and on test |
 | 2026-09-27 10:58 IST | **Final features/stage-1 = NB06 v1 on NB05 v4 candidates (B pair recall 0.9585 -> 0.9576 after top-20 pre-rank); NB06 v2 on v5/v6 candidates (0.9736) dropped** | NB06 takes ~5 h on Kaggle CPU (35M test pairs x ~0.5 ms); not enough time before the 16:30 hard stop to rerun it and the combiner |
+| 2026-09-27 17:20 IST | **PROMPT V7 dense channel (NB03v7 full-pool GPU re-embed) descoped out entirely, not even attempted** | Re-derived from `blocking_report_v6.json` (already on disk): every split is pruned to a flat 50 cands/S1 (`cands_per_s1_mean: 50.0` everywhere), so test alone is 1,732,544 x 50 = 86.6M (S1, candidate) touches against a ~10M-record test pool — that's near-total pool coverage, so "only embed the touched candidates" saves almost nothing over the already-infeasible full-pool encode (~400 rec/s -> many hours; SS5/SS9). User asked to attempt V7 literally including the dense step; this arithmetic (not just the old measurement) is why it was skipped rather than tried and timed out |
+| 2026-09-27 17:20 IST | **V7 = translit dictionary + translit blocking channels only (CPU), no dense, no all-train stage-1 retrain (time-boxed)** | Only feasible slice of the V7 prompt inside the 20:45 gate window given the above and NB06's ~5h full-feature cost; targets the diagnosed largest addressable bucket directly (`reports/diag.md` D3: cross-script ~half of sampled misses) |
+| 2026-09-27 17:20 IST | **Translit dictionary built from Half-A train positives only, applied to all splits** | Leakage discipline (SS4.6): treat the dictionary like an embedder/stage-1 artifact (Half-A-trained), not like the Half-B-trained combiner/decoder |
+| 2026-09-27 17:20 IST | **Translit "adaptive k" simplified to a fixed base k=20 per channel + a boosted k=40 sub-pass only for queries whose OTHER field (name vs address) is empty** | True per-row adaptive k isn't supported by the existing vectorised `run_sparse_channel` without a deeper rewrite; this two-pass approximation gets the stated intent (empty name -> lean harder on address, and vice versa) within the time budget. Documented simplification, not a silent shortcut |
+| 2026-09-27 17:20 IST | **`clean_tokens` (src/translit.py) tokenises by Unicode category (L/M/N kept together), not regex `\w`** | Found by unit test: Python's `\w` excludes category Mn (combining marks incl. Devanagari virama/vowel signs), so `normalize._NON_WORD_RE` — safe in `normalize.py` because it only ever runs on already-romanised ASCII text — would shatter a raw Devanagari word into pieces at every combining mark. New pitfall, added to SS9 |
 
 ## 6. EDA findings (fill in during Step 1)
 
@@ -171,6 +177,7 @@ Run 2026-09-26 ~21:37 IST on Kaggle CPU kernel `nb01-eda` (R1), full train+test 
 - **Qwen3-4B QLoRA on one T4 (dry run): 3.2 s per 4-example step; prompts ~291 tokens (4.7% hit 384); "Yes"/"No" are single tokens** (reports/raw/nb07_dry_v1).
 - **Background-poller task notifications were only delivered when the user next typed** (NB06 finished ~08:15 IST, noticed 10:53). For long waits, poll in the foreground in <= 10-min tool calls instead of ending the turn.
 - **NB06 on Kaggle CPU: ~5 h** for 3M A + 5M B + 35M test full-feature pairs (0.48 ms/pair wall incl. overhead) + stage-1 5-fold at the 1500-round cap.
+- **Python `re`'s `\w` excludes Unicode combining marks (category Mn)**, e.g. Devanagari virama (U+094D) and vowel signs. A regex like `normalize._NON_WORD_RE` (`[^\w&]|_`) is safe only on already-romanised ASCII text; run on raw native-script text it splits one word into several pieces at every combining mark. `translit.clean_tokens` instead tokenises by walking characters and keeping Unicode categories L/M/N together.
 
 ## 10. Open questions
 

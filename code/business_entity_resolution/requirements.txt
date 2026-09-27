@@ -14,6 +14,7 @@ scikit-learn==1.9.1
 lightgbm==4.7.0
 rapidfuzz==3.14.6
 PyYAML==6.0.3
+anyascii==0.3.3        # ISC licence; V7 translit fallback for tokens with no learned dictionary entry (src/translit.py)
 
 # GPU judge track (src/judge_train.py, src/judge_infer.py; NB07/NB08 only)
 torch==2.14.0

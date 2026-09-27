@@ -1,0 +1,7 @@
+{
+  "modules": ["kaggle_env", "io_utils", "normalize", "translit", "blocking"],
+  "driver": "driver.py",
+  "output": "nb05v7_translit.py",
+  "config": true,
+  "defines": {}
+}

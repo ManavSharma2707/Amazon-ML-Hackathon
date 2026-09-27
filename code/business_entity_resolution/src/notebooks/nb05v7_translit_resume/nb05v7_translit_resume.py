@@ -299,64 +299,57 @@ def _ensure_anyascii() -> None:
         subprocess.run([sys.executable, "-m", "pip", "install", "-q", "anyascii==0.3.3"], check=True)
 
 
-def _prune_union_chunked(u: pd.DataFrame, model, chunk_s1: int) -> pd.DataFrame:
-    """Score + prune an already-built union frame in S1-sized slices (bounds memory for huge countries).
+BATCH_S1 = int(os.environ.get("ER_TEST_BATCH_S1", 260_000))  # ~France's scale (259,452), proven to complete cleanly
 
-    `union_channels` builds `u` from `np.unique` of int64 keys `q_row * n_pool
-    + p_row`, so `u` is already sorted by `q_row` (then `p_row`) -- slice
-    boundaries can be found with `searchsorted` instead of a boolean mask.
+
+def _run_batch_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, pruner_path: str, out_path) -> None:
+    """Channels + union + prune + write for one query BATCH, entirely inside a forked child.
+
+    Three distinct failures were hit getting here on real Kaggle runs:
+    1. (OOM, "Killed") One process doing all 3 countries sequentially: RSS
+       climbed across ~10 sequential large sparse-matrix operations for one
+       huge country (809,986 queries x 4.7M pool) and never came back down
+       between channels, even though each channel's own transient memory is
+       freed (`gc.collect()`). Tried: fork per country so each starts clean.
+    2. (SIGSEGV, exit 139) Forking around the WHOLE `build_candidates` call
+       (channels + the inherited `model.predict()` for pruning) crashed
+       instead: LightGBM's `predict()` uses OpenMP internally, and forking a
+       process after a native threaded library has already initialised its
+       thread pool leaves the child with an invalid copy of it. Tried: child
+       does channels+union only (no LightGBM at all), parent (never forked)
+       reloads the union and prunes.
+    3. (OOM again, exit 9, even earlier than #1) That moved the SAME
+       accumulation problem from #1 into the PARENT instead of fixing it:
+       after the parent loaded and pruned France's 29M-row union itself, its
+       own RSS apparently didn't fully return to the OS either, so India's
+       child -- forked from that now-elevated parent state -- OOM'd on only
+       its 2nd channel, well before the point it reached in earlier runs.
+
+    Fix (this version): the parent NEVER touches a country's union or model
+    at all -- every batch's channels, union AND prune happen inside one
+    forked child that loads its OWN fresh Booster (`lgb.Booster(model_file=...)`,
+    not an inherited object, in case that carries part of #2's risk too) and
+    writes only the small, already-pruned result before exiting. The parent's
+    memory footprint is therefore constant across every batch and country,
+    not just reduced. Batches are capped at `BATCH_S1` (~France's query
+    count), the one scale proven (twice) to get all the way through channels
+    -> union -> prune -> write without incident.
+
+    Inputs: country - label (for RuntimeError messages only); s1, pool - test
+            record frames (read-only, shared via fork, never pickled); qr -
+            this batch's S1 row ids; pruner_path - path to the saved Booster
+            model file; out_path - Path to write this batch's `to_cands`
+            parquet to (caller assembles batches into the country's file).
+    Outputs: none (writes `out_path`); raises RuntimeError if the child failed.
     """
-    q = u["q_row"].to_numpy()
-    uniq_q = np.unique(q)
-    out = []
-    for s in range(0, len(uniq_q), chunk_s1):
-        lo, hi = uniq_q[s], uniq_q[min(s + chunk_s1, len(uniq_q)) - 1]
-        a, b = np.searchsorted(q, lo, side="left"), np.searchsorted(q, hi, side="right")
-        sub = u.iloc[a:b]
-        score = model.predict(sub[blocking.PRUNE_FEATURES].to_numpy(np.float32), num_threads=N_JOBS)
-        out.append(blocking.prune(sub, score, BC["prune_top"]))
-    return pd.concat(out, ignore_index=True) if out else u.iloc[:0]
-
-
-def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, model, out_path) -> dict:
-    """Build one test country's candidates: channels+union in a forked child, prune in the parent.
-
-    Two distinct failures were hit here on real Kaggle runs, in order:
-    1. (OOM) France->India->US died partway through India's channels even
-       though each channel's own transient memory is freed (`gc.collect()`)
-       after it completes -- RSS still climbed across ~10 sequential large
-       sparse-matrix operations for one huge country (809,986 queries x 4.7M
-       pool) before Python's allocator returned anything to the OS. Fixed by
-       running the channel+union computation for each country in a forked
-       child (Linux copy-on-write: no pickling of s1/pool) that exits when
-       done, so the OS reclaims everything and the next country starts clean.
-    2. (SIGSEGV, exit 139) Fixing #1 by forking around the WHOLE
-       `build_candidates` call (channels + `model.predict` for pruning)
-       crashed instead: LightGBM's `predict()` uses OpenMP internally, and
-       forking a process after a native threaded library has already
-       initialised its thread pool leaves the child with an invalid copy of
-       it -- a well-known fork/threading hazard, not a memory issue. The
-       channels themselves (pure numpy/scipy) survived the fork fine; the
-       crash traced to the `model.predict` call specifically. Fixed by moving
-       the fork boundary: the child does ONLY channels + union (no LightGBM
-       call at all, proven safe by #1's fix), writes the unpruned union to a
-       temp parquet, and the (never-forked, stable) parent reloads it and
-       runs `model.predict` + prune itself, chunked by S1 to keep peak
-       memory in the parent bounded too.
-
-    Inputs: country - label (report key only); s1, pool - test record frames
-            (read-only, shared via fork, never pickled); qr - this country's S1
-            row ids; model - the pruner Booster (only ever used in the parent);
-            out_path - Path to write the country's final `to_cands` parquet to.
-    Outputs: stats dict (n_s1, union_per_s1_mean, cands_per_s1_mean/p95,
-    share_s1_zero_cands).
-    """
-    tmp_union = out_path.with_suffix(".union.parquet")
     pid = os.fork()
-    if pid == 0:  # child: channels + union ONLY (no LightGBM), write, exit -- never returns
+    if pid == 0:  # child: everything for this batch, write, exit -- never returns
         try:
-            u = build_candidates("test", s1, pool, qr, model=None)
-            u.to_parquet(tmp_union, index=False, compression="zstd")
+            import lightgbm as lgb
+
+            model = lgb.Booster(model_file=pruner_path)
+            pr = build_candidates("test", s1, pool, qr, model=model)
+            to_cands(pr, s1, pool).to_parquet(out_path, index=False, compression="zstd")
             os._exit(0)
         except Exception:
             import traceback
@@ -365,19 +358,32 @@ def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr:
             os._exit(1)
     _, status = os.waitpid(pid, 0)
     if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
-        raise RuntimeError(f"country {country!r} channel/union subprocess failed (status {status})")
+        raise RuntimeError(f"country {country!r} batch subprocess failed (status {status})")
 
-    u = pd.read_parquet(tmp_union)
-    n_union = len(u)
-    pr = _prune_union_chunked(u, model, CHUNK_S1)
-    del u
-    gc.collect()
-    tmp_union.unlink()
-    cps = pr.groupby("q_row").size().reindex(qr).fillna(0)
-    stats = {"n_s1": int(len(qr)), "union_per_s1_mean": round(n_union / len(qr), 2),
-             "cands_per_s1_mean": round(float(cps.mean()), 2), "cands_per_s1_p95": float(np.quantile(cps, 0.95)),
-             "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
-    to_cands(pr, s1, pool).to_parquet(out_path, index=False, compression="zstd")
+
+def run_country_isolated(country: str, s1: pd.DataFrame, pool: pd.DataFrame, qr: np.ndarray, pruner_path: str, out_path) -> dict:
+    """Process one test country in BATCH_S1-sized batches (see `_run_batch_isolated`), then merge.
+
+    Inputs: country, s1, pool, pruner_path - see `_run_batch_isolated`; qr -
+            all of this country's S1 row ids; out_path - Path for the
+            country's final, merged candidate parquet.
+    Outputs: stats dict (n_s1, cands_per_s1_mean/p95, share_s1_zero_cands).
+    """
+    batch_paths = []
+    for bi, s in enumerate(range(0, len(qr), BATCH_S1)):
+        sub = qr[s : s + BATCH_S1]
+        bpath = out_path.with_suffix(f".batch{bi}.parquet")
+        kaggle_env.log(f"    {country!r} batch {bi + 1}/{-(-len(qr) // BATCH_S1)}: {len(sub):,} S1")
+        _run_batch_isolated(country, s1, pool, sub, pruner_path, bpath)
+        batch_paths.append(bpath)
+        gc.collect()
+    pr = pd.concat([pd.read_parquet(p) for p in batch_paths], ignore_index=True)
+    for p in batch_paths:
+        p.unlink()
+    cps = pr.groupby("s1_id").size().reindex(s1["entity_id"].to_numpy()[qr]).fillna(0)
+    stats = {"n_s1": int(len(qr)), "cands_per_s1_mean": round(float(cps.mean()), 2),
+             "cands_per_s1_p95": float(np.quantile(cps, 0.95)), "share_s1_zero_cands": round(float((cps == 0).mean()), 5)}
+    pr.to_parquet(out_path, index=False, compression="zstd")
     del pr
     gc.collect()
     return stats
@@ -434,7 +440,7 @@ def main() -> None:
         qr = np.flatnonzero(s1_cty == c).astype(np.int32)
         kaggle_env.log(f"test {c!r}: {len(qr):,} S1 queries (isolated subprocess)")
         out_path = WORK / f"cands_test_{c}.parquet"
-        per_country[c] = run_country_isolated(c, s1, pool, qr, model, out_path)
+        per_country[c] = run_country_isolated(c, s1, pool, qr, str(WORK / "pruner.txt"), out_path)
         cand_files.append(out_path)
         kaggle_env.log(f"  {c!r} done: {per_country[c]}")
         gc.collect()

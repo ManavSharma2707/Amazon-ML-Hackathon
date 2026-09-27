@@ -331,12 +331,25 @@ def main() -> None:
 
     unions = {}
     both = np.sort(np.concatenate([q["A"], q["B"]]))
-    kaggle_env.log(f"train halves A+B: {len(both):,} S1 queries in one pass")
-    u = build_candidates("train", s1, pool, both)
-    in_a = np.isin(u["q_row"].to_numpy(), q["A"])
-    unions["A"] = u[in_a].reset_index(drop=True)
-    unions["B"] = u[~in_a].reset_index(drop=True)
-    del u, in_a
+    kaggle_env.log(f"train halves A+B: {len(both):,} S1 queries, channels computed once")
+    parts = sparse_parts(s1, pool, both)
+    is_a = np.zeros(len(s1), dtype=bool)
+    is_a[q["A"]] = True
+    # Filter the raw per-channel arrays by half BEFORE unioning, instead of
+    # building one combined union (58M rows) and boolean-splitting it after:
+    # that split needs the original frame plus two filtered copies alive at
+    # once (~2x peak) and OOM-killed the first real Kaggle run at this exact
+    # point (memory.md pitfalls).
+    for h in ("A", "B"):
+        mask = is_a if h == "A" else ~is_a
+        sub = {c: tuple(a[mask[v[0]]] for a in v) for c, v in parts.items()}
+        u = blocking.union_channels(sub, len(pool))
+        del sub
+        gc.collect()
+        _features(u, "train")
+        unions[h] = u
+        kaggle_env.log(f"  train {h}: union {len(u):,} pairs for {len(q[h]):,} S1")
+    del parts, u
     gc.collect()
 
     kaggle_env.log("training the cheap pre-ranker on Half A (with translit channels)")

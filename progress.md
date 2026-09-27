@@ -7,8 +7,8 @@
 
 ## Autonomous run state (PROMPT FINISH — Option C)
 
-- **Updated:** 2026-09-27 15:30 IST
-- **Stage:** Track 1 ABORTED at S0 (feasibility check); Track 2 (packaging) in progress
+- **Updated:** 2026-09-27 17:05 IST
+- **Stage:** COMPLETE. Track 1 ABORTED at S0 (feasibility check); Track 2 (packaging) done. Tag `final` = commit `de33d46`.
 - **sub-01 UPLOADED** by user (public LB score pending)
 - **Final submission = sub-01** (stage-1 + isotonic + hard one-owner + expected-F0.5 decoder, NB09a v3 with saved artifacts, `er-nb09a-decode-submit`, tag `sub-01`, commit `698bd24`; v3 re-verified byte-identical B.f05 0.964763 to v2). B F0.5 0.9648 (US 0.9699 / India 0.9571), LOCO-mean 0.9635, scrambled drop 0.0009.
 - **Combiner (NB09) does NOT replace it:** B F0.5 0.9674 (real gain, bootstrap CI excludes 0) but LOCO-mean 0.963464 vs sub-01's 0.963472 — no LOCO gain, so per CLAUDE.md §4.3 gate it is dropped as the final config (kept as a documented ablation/ablation-table row only).
@@ -23,13 +23,19 @@
   - `README.md` rewritten: honest about what's actually on the shipped inference path (LightGBM only; Qwen3 downloaded/coded/evaluated but not shipped), real notebook runtimes table, reproduction instructions.
   - `src/scripts/make_doc_tables.py` written and run against `reports/raw/*` to generate every table in the two documents below (no hand-typed numbers).
   - `Documentation_template.md` (full) and `approach_summary.md` (≤2 pages) written, using make_doc_tables.py's real output.
-- **Still to do before 19:30:** NB11 reproducibility check (optional, time-permitting — predict.py's own tests already cover both reproduction paths); code audit (docstrings/dead code/hard-coded paths — mostly already true from earlier prompts' discipline, spot-check remaining); privacy scan of full git history (not just this diff); build the final zip; walk memory.md §11; SUBMISSION_READY.md.
+- **Track 2 completed since:**
+  - Code audit: AST-scanned every `src/*.py`/`driver.py`/`scripts/*.py` function/class for a missing docstring (0 remaining, 5 fixed, commit `d5cc5a3`); grepped for TODO/debugger breakpoints/hard-coded paths/usernames (none found); full test suite green (89/89, incl. the slow `sample/`-scale demo train+predict test).
+  - Privacy scan of the **full git history** (not just the current diff): no Kaggle credentials/tokens found anywhere; one old (already-superseded) commit had a literal Kaggle username in a `tools/kaggle_ops.py` docstring *example command* — the current file is already clean, `tools/` is never part of the zip, and the repo has no remote, so history was not rewritten (a username in an unpushed private repo's old history, not a committed secret) — logged as a known item in SUBMISSION_READY.md rather than silently ignored.
+  - Built `submission_package/TEAM_NAME_PLACEHOLDER_submission.zip` (243 MB, 136 files): `output/*.tsv`, `code/business_entity_resolution/{src,artifacts,README.md,requirements.txt}`, `Documentation_template.md`, `approach_summary.md`. Verified via `zipfile.testzip()` (all CRCs OK) and streamed MD5 of both TSVs from inside the zip, matching the files that already passed the official validator (both locally and in-kernel with `--check-ids`) exactly.
+  - **NB11 not pushed to Kaggle** (time-boxed out); `src/predict.py`'s own `--from-features` and `--demo` paths were validated instead — locally, end to end, against both a synthetic table and (crucially) the **real bundled artifacts**, which is what caught the SPARSE_CHANNELS regression above.
+  - Walked `memory.md` §11 checklist item by item with evidence (commit `a707f9a`).
+  - Wrote `SUBMISSION_READY.md` (git-ignored) with the full handoff.
 - **Uploads used today (27 Sep):** 1 (sub-01)
-- **Peer sessions:** amazon-hackathon-0c / -6c asked (04:40) not to push/commit
+- **Peer sessions:** amazon-hackathon-0c / -6c asked (04:40) not to push/commit; one benign, additive commit (`c9cea16`, a read-only diagnostic report) landed from a peer before they saw the request — no conflict, left in place.
 
 ## Current focus
 
-**Prompt 3 in progress (03:35 IST).** Code done + unit-tested + local sample smoke runs: `explain_diff`, `features`, `stage1`, `decoder`, `exclusivity`, streaming `check_outputs`, `judge_data`, `judge_train`; kernels NB06 (`er-nb06-features-stage1`), NB09a (`er-nb09a-decode-submit`), NB06b (`er-nb06b-judge-data`), NB07 (+dry). **Running:** NB06 v1 on R1 (pushed ~03:15 IST, on NB05 v4 or v5 output — whichever Kaggle mounted), NB07 dry on R2 (sample-built `er-judge-inputs` v1). **Next:** NB06 done -> push NB09a + NB06b on R1 -> fetch TSVs -> check_outputs + validator -> commit + tag sub-01; relay real judge inputs -> NB07 full on R2. Local disk was full (freed 2.2 GB of stale upload zips; ~2 GB free).
+**DONE (2026-09-27 17:05 IST).** All prompts complete: sub-01 uploaded and packaged as the final submission (tag `final` = `de33d46`). See "Autonomous run state" above and `SUBMISSION_READY.md` (git-ignored) for the full handoff. Nothing is currently running on Kaggle. Remaining open items are non-blocking: public LB score not yet reported back, team name placeholder in the zip filename, Google Form Q2/Q5/Q6/Q7.
 
 **Prompt 2 (foundations + blocking) done except the G1 target.** NB02 v1 complete. Blocking = sparse only (dense retrieval infeasible at ~400 rec/s). `er-nb05-blocking-sparse` **v4 is the current usable candidate set** (superseded) → **v5 is the current candidate set** (B pair recall 0.9733: US 0.982 / India 0.959; entity-complete 0.916; all test S1 covered, 50 cands/S1; commit `2801f74`). **Next (Prompt 3): features + stage-1 + SAFETY SUBMISSION #1 — there is still no submission.** Pending user decision: train-only vs per-run test statistics (Q3).
 
@@ -161,7 +167,7 @@
 
 | # | Time (IST) | Description | Git tag / commit | B F0.5 | LOCO-mean | Public LB | Validator | File version |
 |---|---|---|---|---|---|---|---|---|
-| sub-01 | 2026-09-27 13:00 | Stage-1 (NB06 v1, v4 cands top-20) + isotonic + hard one-owner + decoder (lam 1.3), `er-nb09a-decode-submit` v2 | tag `sub-01` | 0.9648 (US 0.9699 / India 0.9571) | 0.9635 (lite) | pending (user uploads) | PASS (local + in-kernel --check-ids) | output/*.tsv |
+| sub-01 | 2026-09-27 13:00 | Stage-1 (NB06 v1, v4 cands top-20) + isotonic + hard one-owner + decoder (lam 1.3), `er-nb09a-decode-submit` v2/v3 | tag `sub-01` = `final` (no better gated config found) | 0.9648 (US 0.9699 / India 0.9571) | 0.9635 (lite) | **UPLOADED by user; score not yet reported back** | PASS (local + in-kernel --check-ids; v3 rerun byte-identical) | output/*.tsv, `submission_package/TEAM_NAME_PLACEHOLDER_submission.zip` |
 
 ---
 
